@@ -23,7 +23,7 @@ _testmain.go
 *.test
 *.prof
 
-web/assets/wasm_exec.js
-web/assets/jd.wasm
-web/serve/files.go
+v2/internal/web/assets/wasm_exec.js
+v2/internal/web/assets/jd.wasm
+v2/internal/web/serve/files.go
 release/

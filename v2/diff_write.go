@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	lcs "github.com/yudai/golcs"
 	"golang.org/x/exp/slices"
 )
 
@@ -15,51 +14,93 @@ const (
 	colorGreen   = "\033[32m"
 )
 
-// colorStringDiff returns a colored string diff where characters not in the common sequence
-// are colored with the provided color code
-func colorStringDiff(str string, commonSequence []interface{}, colorCode string) string {
+// colorStringDiff renders a string as JSON, adding the provided color
+// around all runes not in the common sequence of runes.
+func colorStringMarshal(str jsonString, commonSequence []JsonNode, colorCode string) string {
+	sJson, _ := json.Marshal(str)
+	// Strip enclosing quotes which are not part of the common sequence.
+	sRaw := string(sJson)[1 : len(sJson)-1]
 	var b bytes.Buffer
-	runes := []rune(str)
+	b.WriteRune('"')
 	lcsIndex := 0
-	for i := 0; i < len(runes); i++ {
-		if lcsIndex < len(commonSequence) && runes[i] == commonSequence[lcsIndex].(rune) {
-			b.WriteRune(runes[i])
-			lcsIndex++
+	for _, r := range sRaw {
+		if lcsIndex < len(commonSequence) {
+			// Extract rune value from JsonNode
+			if jsonStr, ok := commonSequence[lcsIndex].(jsonString); ok {
+				if rawStr, ok := jsonStr.raw().(string); ok && len(rawStr) == 1 && rune(rawStr[0]) == r {
+					b.WriteRune(r)
+					lcsIndex++
+				} else {
+					b.WriteString(colorCode)
+					b.WriteRune(r)
+					b.WriteString(colorDefault)
+				}
+			} else {
+				b.WriteString(colorCode)
+				b.WriteRune(r)
+				b.WriteString(colorDefault)
+			}
 		} else {
 			b.WriteString(colorCode)
-			b.WriteRune(runes[i])
+			b.WriteRune(r)
 			b.WriteString(colorDefault)
 		}
 	}
+	b.WriteRune('"')
 	return b.String()
 }
 
 func (d DiffElement) Render(opts ...Option) string {
-	isColor := checkOption[colorOption](opts)
-	isMerge := checkOption[mergeOption](opts) || d.Metadata.Merge
+	o := refine(&options{retain: opts}, nil)
+	isColor := checkOption[colorOption](o)
+	isMerge := checkOption[mergeOption](o) || d.Metadata.Merge
 	b := bytes.NewBuffer(nil)
-	b.WriteString(d.Metadata.Render())
+	// Render options from the Options field if present, otherwise fall back to metadata
+	if len(d.Options) > 0 {
+		for _, opt := range d.Options {
+			optJson, err := json.Marshal(opt)
+			if err != nil {
+				// Skip options that can't be serialized
+				continue
+			}
+			b.WriteString(fmt.Sprintf("^ %s\n", string(optJson)))
+		}
+	} else {
+		// Check if any of the passed global options would make metadata redundant
+		shouldSkipMetadata := false
+		for _, opt := range opts {
+			if _, isMerge := opt.(mergeOption); isMerge && d.Metadata.Merge {
+				shouldSkipMetadata = true
+				break
+			}
+		}
+
+		if !shouldSkipMetadata {
+			// Fall back to rendering metadata for backward compatibility
+			b.WriteString(d.Metadata.Render())
+		}
+	}
 	b.WriteString("@ ")
 	b.Write([]byte(d.Path.JsonNode().Json()))
 	b.WriteString("\n")
 
 	// Check if this is a single string diff. If so, compute the common sequence for a character
 	// level diff.
-	var commonSequence []interface{}
+	var commonSequence []JsonNode
 	isSingleStringDiff := false
 	if len(d.Remove) == 1 && len(d.Add) == 1 {
 		oldStr, oldOk := d.Remove[0].(jsonString)
 		newStr, newOk := d.Add[0].(jsonString)
 		if oldOk && newOk {
-			oldChars := make([]interface{}, len(string(oldStr)))
-			for i, c := range string(oldStr) {
-				oldChars[i] = c
+			oldNodes := []JsonNode{}
+			for _, c := range oldStr {
+				oldNodes = append(oldNodes, jsonString(string(c)))
 			}
-			newChars := make([]interface{}, len(string(newStr)))
-			for i, c := range string(newStr) {
-				newChars[i] = c
+			newNodes := []JsonNode{}
+			for _, c := range newStr {
+				newNodes = append(newNodes, jsonString(string(c)))
 			}
-			commonSequence = lcs.New(oldChars, newChars).Values()
+			commonSequence = newLcs(oldNodes, newNodes).Values()
 			isSingleStringDiff = true
 		}
 	}
@@ -82,10 +123,10 @@ func (d DiffElement) Render(opts ...Option) string {
 			continue
 		}
 		if isSingleStringDiff && isColor {
-			oldStr := string(oldValue.(jsonString))
-			b.WriteString("- \"")
-			b.WriteString(colorStringDiff(oldStr, commonSequence, colorRed))
-			b.WriteString("\"\n")
+			oldStr := oldValue.(jsonString)
+			b.WriteString("- ")
+			b.WriteString(colorStringMarshal(oldStr, commonSequence, colorRed))
+			b.WriteString("\n")
 		} else {
 			if isColor {
 				b.WriteString(colorRed)
@@ -117,10 +158,10 @@ func (d DiffElement) Render(opts ...Option) string {
 			continue
 		}
 		if isSingleStringDiff && isColor {
-			newStr := string(newValue.(jsonString))
-			b.WriteString("+ \"")
-			b.WriteString(colorStringDiff(newStr, commonSequence, colorGreen))
-			b.WriteString("\"\n")
+			newStr := newValue.(jsonString)
+			b.WriteString("+ ")
+			b.WriteString(colorStringMarshal(newStr, commonSequence, colorGreen))
+			b.WriteString("\n")
 		} else {
 			if isColor {
 				b.WriteString(colorGreen)
@@ -152,8 +193,23 @@ func (d DiffElement) Render(opts ...Option) string {
 	}
 	return b.String()
 }
+
 func (d Diff) Render(opts ...Option) string {
 	b := bytes.NewBuffer(nil)
+
+	// Only render global options header if there are actual diff elements
+	// Empty diffs with options headers are invalid
+	if len(d) > 0 && len(opts) > 0 {
+		for _, opt := range opts {
+			optJson, err := json.Marshal(opt)
+			if err != nil {
+				// Skip options that can't be serialized
+				continue
+			}
+			b.WriteString(fmt.Sprintf("^ %s\n", string(optJson)))
+		}
+	}
+
 	for _, element := range d {
 		b.WriteString(element.Render(opts...))
 	}

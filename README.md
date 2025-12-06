@@ -84,13 +84,17 @@ Options:
   -color       Print color diff.
   -p           Apply patch FILE1 to FILE2 or STDIN.
   -o=FILE3     Write to FILE3 instead of STDOUT.
-  -set         Treat arrays as sets.
-  -mset        Treat arrays as multisets (bags).
-  -setkeys     Keys to identify set objects
+  -opts='[]'   JSON array of options. Supports global options and PathOptions.
+               Global: ["SET"], ["MULTISET"], [{"precision":0.1}], [{"setkeys":["id"]}], ["DIFF_ON"], ["DIFF_OFF"]
+               PathOptions target specific paths: [{"@":["path"],"^":["SET"]}]
+               Example: [{"@":["users"],"^":["SET"]},{"@":["scores",0],"^":[{"precision":0.1}]}]
+  -set         Treat arrays as sets. Same as -opts='["SET"]'.
+  -mset        Treat arrays as multisets (bags). Same as -opts='["MULTISET"]'.
+  -setkeys     Keys to identify set objects. Same as -opts='[{"setkeys":["key1","key2"]}]'.
   -yaml        Read and write YAML instead of JSON.
   -port=N      Serve web UI on port N
   -precision=N Maximum absolute difference for numbers to be equal.
-               Example: -precision=0.00001
+               Same as -opts='[{"precision":N}]'. Example: -precision=0.00001
   -f=FORMAT    Read and write diff in FORMAT "jd" (default), "patch" (RFC 6902) or
                "merge" (RFC 7386)
   -t=FORMATS   Translate FILE1 between FORMATS. Supported formats are "jd",
@@ -105,6 +109,8 @@ Examples:
   jd -set a.json b.json
   jd -f patch a.json b.json
   jd -f merge a.json b.json
+  jd -opts='[{"@":["items"],"^":["SET"]}]' a.json b.json
+  jd -opts='[{"@":["temperature"],"^":[{"precision":0.1}]}]' a.json b.json
 ```
 
 #### Command Line Option Details
@@ -115,6 +121,68 @@ return a diff if there are differences in the objects themselves,
 their keys and/or values. You shouldn't expect this option to mask or
 ignore non-specified keys, it is not intended as a way to 'ignore'
 some differences between objects.
+
+#### PathOptions: Targeted Comparison Options
+
+PathOptions allow you to apply different comparison semantics to specific paths in your JSON/YAML data. This enables precise control over how different parts of your data are compared.
+
+**PathOption Syntax:**
+```json
+{"@": ["path", "to", "target"], "^": [options]}
+```
+
+- `@` (At): JSON path array specifying where to apply the option
+- `^` (Then): Array of options to apply at that path
+
+**Supported Options:**
+- `"SET"`: Treat array as a set (ignore order and duplicates)
+- `"MULTISET"`: Treat array as a multiset (ignore order, count duplicates)  
+- `{"precision": N}`: Numbers within N are considered equal
+- `{"setkeys": ["key1", "key2"]}`: Match objects by specified keys
+- `"DIFF_ON"`: Enable diffing at this path (default behavior)
+- `"DIFF_OFF"`: Disable diffing at this path, ignore all changes
+
+**Examples:**
+
+Treat specific array as a set while others remain as lists:
+```bash
+jd -opts='[{"@":["tags"],"^":["SET"]}]' a.json b.json
+```
+
+Apply precision to specific temperature field:
+```bash
+jd -opts='[{"@":["sensor","temperature"],"^":[{"precision":0.1}]}]' a.json b.json
+```
+
+Multiple PathOptions - SET on one path, precision on another:
+```bash
+jd -opts='[{"@":["items"],"^":["SET"]}, {"@":["price"],"^":[{"precision":0.01}]}]' a.json b.json
+```
+
+Target specific array index:
+```bash
+jd -opts='[{"@":["measurements", 0],"^":[{"precision":0.05}]}]' a.json b.json
+```
+
+Apply to root level:
+```bash
+jd -opts='[{"@":[],"^":["SET"]}]' a.json b.json
+```
+
+Ignore specific fields (deny-list approach):
+```bash
+jd -opts='[{"@":["timestamp"],"^":["DIFF_OFF"]}, {"@":["metadata","generated"],"^":["DIFF_OFF"]}]' a.json b.json
+```
+
+Allow-list approach - ignore everything except specific fields:
+```bash
+jd -opts='[{"@":[],"^":["DIFF_OFF"]}, {"@":["userdata"],"^":["DIFF_ON"]}]' a.json b.json
+```
+
+Nested override - ignore parent but include specific child:
+```bash
+jd -opts='[{"@":["config"],"^":["DIFF_OFF"]}, {"@":["config","user_settings"],"^":["DIFF_ON"]}]' a.json b.json
+```
 
 ## Library usage
 
@@ -149,76 +217,284 @@ func ExampleJsonNode_Patch() {
   "foo"
 + "bar"
 ]
-`
+`)
 	b, _ := a.Patch(diff)
 	fmt.Print(b.Json())
 	// Output:
 	// ["foo","bar"]
 }
+
+func ExamplePathOptions() {
+	// Apply SET semantics to specific array path
+	a, _ := jd.ReadJsonString(`{"tags":["red","blue","green"], "items":[1,2,3]}`)
+	b, _ := jd.ReadJsonString(`{"tags":["green","red","blue"], "items":[3,2,1]}`)
+	
+	// Only treat "tags" as a set, "items" remain as list
+	opts, _ := jd.ReadOptionsString(`[{"@":["tags"],"^":["SET"]}]`)
+	diff := a.Diff(b, opts...)
+	fmt.Print(diff.Render())
+	// Output:
+	// @ ["items",0]
+	// [
+	// + 3
+	// + 2
+	//   1
+	// @ ["items",3]
+	//   1
+	// - 2
+	// - 3
+	// ]
+}
+
+func ExampleMultiplePathOptions() {
+	a, _ := jd.ReadJsonString(`{"temp":20.12, "pressure":1013.25, "tags":["A","B","C"]}`)
+	b, _ := jd.ReadJsonString(`{"temp":20.15, "pressure":1013.30, "tags":["C","A","B"]}`)
+	
+	// Apply precision to temp, exact match to pressure, SET semantics to tags
+	opts, _ := jd.ReadOptionsString(`[
+		{"@":["temp"],"^":[{"precision":0.1}]},
+		{"@":["tags"],"^":["SET"]}
+	]`)
+	diff := a.Diff(b, opts...)
+	fmt.Print(diff.Render())
+	// Output:
+	// @ ["pressure"]
+	// - 1013.25
+	// + 1013.3
+}
+
+func ExampleSelectiveDiffing() {
+	a, _ := jd.ReadJsonString(`{"userdata":"important","system":"ignore1","timestamp":"2023-01-01"}`)
+	b, _ := jd.ReadJsonString(`{"userdata":"changed","system":"ignore2","timestamp":"2023-01-02"}`)
+	
+	// Allow-list approach: ignore everything except userdata
+	opts, _ := jd.ReadOptionsString(`[
+		{"@":[],"^":["DIFF_OFF"]},
+		{"@":["userdata"],"^":["DIFF_ON"]}
+	]`)
+	diff := a.Diff(b, opts...)
+	fmt.Print(diff.Render())
+	// Output:
+	// @ ["userdata"]
+	// - "important"
+	// + "changed"
+}
+
+func ExampleNestedOverride() {
+	a, _ := jd.ReadJsonString(`{"config":{"system":"val1","user_settings":"setting1"}}`)
+	b, _ := jd.ReadJsonString(`{"config":{"system":"val2","user_settings":"setting2"}}`)
+	
+	// Ignore config changes except for user_settings
+	opts, _ := jd.ReadOptionsString(`[
+		{"@":["config"],"^":["DIFF_OFF"]},
+		{"@":["config","user_settings"],"^":["DIFF_ON"]}
+	]`)
+	diff := a.Diff(b, opts...)
+	fmt.Print(diff.Render())
+	// Output:
+	// @ ["config","user_settings"]
+	// - "setting1"
+	// + "setting2"
+}
 ```
 
-## Diff language
+## Diff Language (v2)
 
-Note: this is the v1 grammar. Needs to be updated with v2.
+The jd v2 diff format is a human-readable structural diff format with context and metadata support.
 
-![Railroad diagram of EBNF](/ebnf.png)
+### Format Overview
 
-- A diff is zero or more sections
-- Sections start with a `@` header and the path to a node
-- A path is a JSON list of zero or more elements accessing collections
-- A JSON number element (e.g. `0`) accesses an array
-- A JSON string element (e.g. `"foo"`) accesses an object
-- An empty JSON object element (`{}`) accesses an array as a set or multiset
-- After the path is one or more removals or additions, removals first
-- Removals start with `-` and then the JSON value to be removed
-- Additions start with `+` and then the JSON value to added
+A diff consists of:
+- **Options header** (optional): Shows the options used to create the diff
+- **Metadata lines** (optional): Start with `^` and specify hunk-level metadata  
+- **Diff hunks**: Start with `@` and specify the path, followed by changes and context
 
-### EBNF
+### Options Header
+
+When options are provided to `jd`, they are displayed at the beginning of the diff to show how it was produced. Each option appears on its own line starting with `^ `:
+
+```diff
+^ "SET"
+^ {"precision":0.001}
+@ ["items",{}]
+- "old-item"
++ "new-item"
+```
+
+This feature helps understand:
+- Whether arrays were treated as sets (`"SET"`) or multisets (`"MULTISET"`) 
+- What precision was used for number comparisons (`{"precision":N}`)
+- Which keys identify set objects (`{"setkeys":["key1","key2"]}`)
+- Path-specific options (`{"@":["path"],"^":["OPTION"]}`)
+- Whether merge semantics were applied (`"MERGE"`)
+- If color output was requested (`"COLOR"`)
+
+The options header is informational and helps with debugging diff behavior. Note that diffs with options headers can still be parsed and applied as patches.
+
+### EBNF Grammar
 
 ```EBNF
-Diff ::= ( '@' '[' ( 'JSON String' | 'JSON Number' | 'Empty JSON Object' )* ']' '\n' ( ( '-' 'JSON Value' '\n' )+ | '+' 'JSON Value' '\n' ) ( '+' 'JSON Value' '\n' )* )*
+Diff ::= OptionsHeader* (MetadataLine | DiffHunk)*
+
+OptionsHeader ::= '^' SP JsonValue NEWLINE
+
+MetadataLine ::= '^' SP JsonObject NEWLINE
+
+DiffHunk ::= '@' SP JsonArray NEWLINE
+             ContextLine*
+             (RemoveLine | AddLine)*
+             ContextLine*
+
+ContextLine ::= SP SP JsonValue NEWLINE
+
+RemoveLine ::= '-' SP JsonValue NEWLINE
+
+AddLine ::= '+' SP JsonValue NEWLINE
+
+JsonArray ::= '[' (PathElement (',' PathElement)*)? ']'
+
+PathElement ::= JsonString        // Object key: "foo"
+              | JsonNumber        // Array index: 0 
+              | EmptyObject       // Set marker: {}
+              | EmptyArray        // List marker: [] 
+              | ObjectWithKeys    // Set keys: {"id":"value"}
+              | ArrayWithObject   // Multiset: [{}] or [{"id":"value"}]
 ```
 
-### Examples
+*Note: Railroad diagram at /ebnf.png needs updating for v2 format.*
 
-```DIFF
-@ ["a"]
-- 1
-+ 2
+### Path Elements Reference
+
+| Element | Description | Example Path |
+|---------|-------------|--------------|
+| `"key"` | Object field access | `["user","name"]` |
+| `0`, `1`, etc. | Array index access | `["items",0]` |
+| `{}` | Treat array as set (ignore order/duplicates) | `["tags",{}]` |
+| `[]` | Explicit list marker | `["values",[]]` |
+| `{"id":"val"}` | Match objects by specific key | `["users",{"id":"123"}]` |
+| `[{}]` | Treat as multiset (ignore order, count duplicates) | `["counts",[{}]]` |
+| `[{"key":"val"}]` | Match multiset objects by key | `["items",[{"id":"456"}]]` |
+
+### Line Types
+
+- **`@ [path]`**: Diff hunk header specifying the location
+- **`^ {metadata}`**: Metadata for the following hunks (inherits downward)  
+- **`  value`**: Context lines (spaces) - elements that provide context
+- **`- value`**: Remove lines - values being removed
+- **`+ value`**: Add lines - values being added
+
+### Core Examples
+
+#### Simple Object Change
+```diff
+@ ["name"]
+- "Alice"
++ "Bob"
 ```
 
-```DIFF
-@ [2]
-[
-+ {"foo":"bar"}
+#### Array Element with Context
+```diff
+@ ["items",1]
+  "apple"
++ "banana" 
+  "cherry"
+```
+
+#### Set Operations (Ignore Order)
+```diff
+@ ["tags",{}]
+- "urgent"
++ "completed"
++ "reviewed"
+```
+
+#### Object Identification by Key
+```diff
+@ ["users",{"id":"123"},"status"]
+- "pending"
++ "active"
+```
+
+#### Multiset Operations
+```diff
+@ ["scores",[{}]]
+- 85
+- 92
++ 88
++ 95
++ 95
+```
+
+### Advanced Examples
+
+#### Merge Patch Metadata
+```diff
+^ {"Merge":true}
+@ ["config"]
+- {"timeout":30,"retries":3}
++ {"timeout":60,"retries":5,"debug":true}
+```
+
+#### Complex List Context
+```diff
+@ ["matrix",1,2]
+  [[1,2,3],[4,5,6]]
+- 6
++ 9
+  [7,8,9]
 ]
 ```
 
-```DIFF
-@ ["Movies",67,"Title"]
-- "Dr. Strangelove"
-+ "Dr. Evil Love"
-@ ["Movies",67,"Actors","Dr. Strangelove"]
-- "Peter Sellers"
-+ "Mike Myers"
-@ ["Movies",102]
-  {"Title":"Terminator","Actors":{"Terminator":"Arnold"}}
-+ {"Title":"Austin Powers","Actors":{"Austin Powers":"Mike Myers"}}
-]
+#### Nested Set with PathOptions
+```diff
+@ ["department","employees",{"employeeId":"E123"},"projects",{}]
+- "ProjectA"
++ "ProjectB" 
++ "ProjectC"
 ```
 
-```DIFF
-@ ["Movies",67,"Tags",{}]
-- "Romance"
-+ "Action"
-+ "Comedy"
+#### Multiple Hunks with Inheritance
+```diff
+^ {"Merge":true}
+@ ["user","preferences"] 
++ {"theme":"dark","notifications":true}
+@ ["user","lastLogin"]
++ "2023-12-01T10:30:00Z"
 ```
+
+### Integration with PathOptions
+
+The path syntax directly corresponds to PathOption targeting:
+- Diff path `["users",{}]` ↔ PathOption `{"@":["users"],"^":["SET"]}`
+- Diff path `["items",{"id":"123"}]` ↔ PathOption with SetKeys targeting
+- Diff path `["scores",[{}]]` ↔ PathOption `{"@":["scores"],"^":["MULTISET"]}`
+
+This allows fine-grained control over how different parts of your data structures are compared and diffed.
 
 ## Cookbook
 
 ### Use git diff to produce a structural diff:
-```diff
+
+#### Option 1: Direct external tool (simple, one-off usage)
+```bash
 git difftool -yx jd @ -- foo.json
+```
+Use this when you want a quick structural diff without any setup. Works immediately if `jd` is in your PATH.
+
+#### Option 2: Configure as git diff driver (integrated, regular usage)
+```bash
+# One-time setup
+git config diff.jd.command 'jd --git-diff-driver'
+echo "*.json diff=jd" >> .gitattributes
+
+# Then use with any git diff command:
+git diff foo.json
+git difftool -t jd foo.json
+```
+Use this approach if you regularly work with JSON files. It integrates `jd` into git's diff system, automatically using structural diffs for JSON files across all git commands. The `.gitattributes` file can be committed to share this behavior with your team.
+
+Example output from either approach:
+```diff
 @ ["foo"]
 - "bar"
 + "baz"
@@ -231,7 +507,7 @@ kubectl edit deployment example
 # change cpu resource from 100m to 200m
 kubectl get deployment example -oyaml | jd -yaml a.yaml
 ```
-output:
+output (showing all changes):
 ```diff
 @ ["metadata","annotations","deployment.kubernetes.io/revision"]
 - "2"
@@ -255,9 +531,36 @@ output:
 - 2
 + 3
 ```
-apply these change to another deployment:
+
+Focus only on spec changes by ignoring metadata and status:
 ```bash
-# edit file "patch" to contain only the hunk updating cpu request
-kubectl patch deployment example2 --type json --patch "$(jd -t jd2patch ~/patch)"
+kubectl get deployment example -oyaml | jd -yaml -opts='[
+  {"@":["metadata"],"^":["DIFF_OFF"]},
+  {"@":["status"],"^":["DIFF_OFF"]}
+]' a.yaml
+```
+output (spec changes only):
+```diff
+@ ["spec","template","spec","containers",0,"resources","requests","cpu"]
+- "100m"
++ "200m"
+```
+
+Allow-list approach - ignore everything except spec:
+```bash
+kubectl get deployment example -oyaml | jd -yaml -opts='[
+  {"@":[],"^":["DIFF_OFF"]},
+  {"@":["spec"],"^":["DIFF_ON"]}
+]' a.yaml
+```
+
+Apply these changes to another deployment:
+```bash
+# Create a focused patch file containing only the CPU change
+kubectl get deployment example -oyaml | jd -yaml -opts='[
+  {"@":["metadata"],"^":["DIFF_OFF"]},
+  {"@":["status"],"^":["DIFF_OFF"]}
+]' a.yaml > cpu-patch
+kubectl patch deployment example2 --type json --patch "$(jd -t jd2patch cpu-patch)"
 ```
 

@@ -6,66 +6,225 @@ import (
 )
 
 func TestDiffRender(t *testing.T) {
-	checkDiffRender(t, `{"a":1}`, `{"a":2}`,
-		`@ ["a"]`,
-		`- 1`,
-		`+ 2`)
-	checkDiffRender(t, `{"a":{"b":1}}`, `{"a":{"b":2}}`,
-		`@ ["a","b"]`,
-		`- 1`,
-		`+ 2`)
-	checkDiffRender(t, `{"a":{"b":1}}`, `{"a":{"c":2}}`,
-		`@ ["a","b"]`,
-		`- 1`,
-		`@ ["a","c"]`,
-		`+ 2`)
-	checkDiffRender(t, `{"a":{"b":1}}`, `{"c":{"b":1}}`,
-		`@ ["a"]`,
-		`- {"b":1}`,
-		`@ ["c"]`,
-		`+ {"b":1}`)
-	// String changes
-	checkDiffRender(t, `{"a":"bar"}`, `{"a":"baz"}`,
-		`@ ["a"]`,
-		`- "bar"`,
-		`+ "baz"`)
-	// Array of strings
-	checkDiffRender(t, `{"qux":["foobar","foobaz"]}`, `{"qux":["fooarrr","foobaz"]}`,
-		`@ ["qux",0]`,
-		`[`,
-		`- "foobar"`,
-		`+ "fooarrr"`,
-		`  "foobaz"`,
-	)
-	// Addition only
-	checkDiffRender(t, `{"str":""}`, `{"str":"abc"}`,
-		`@ ["str"]`,
-		`- ""`,
-		`+ "abc"`)
-	// Removal only
-	checkDiffRender(t, `{"str":"abc"}`, `{"str":""}`,
-		`@ ["str"]`,
-		`- "abc"`,
-		`+ ""`)
-	// Nested strings
-	checkDiffRender(t, `{"a":{"b":"hello"}}`, `{"a":{"b":"world"}}`,
-		`@ ["a","b"]`,
-		`- "hello"`,
-		`+ "world"`)
-	// Multiple string changes
-	checkDiffRender(t, `{"a":"foo","b":"bar"}`, `{"a":"baz","b":"qux"}`,
-		`@ ["a"]`,
-		`- "foo"`,
-		`+ "baz"`,
-		`@ ["b"]`,
-		`- "bar"`,
-		`+ "qux"`)
-	// Key change
-	checkDiffRender(t, `{"a":"foo"}`, `{"b":"foo"}`,
-		`@ ["a"]`,
-		`- "foo"`,
-		`@ ["b"]`,
-		`+ "foo"`)
+	tests := []struct {
+		name      string
+		a         string
+		b         string
+		diffLines []string
+	}{
+		{
+			name: "simple object value change",
+			a:    `{"a":1}`,
+			b:    `{"a":2}`,
+			diffLines: []string{
+				`@ ["a"]`,
+				`- 1`,
+				`+ 2`,
+			},
+		},
+		{
+			name: "nested object value change",
+			a:    `{"a":{"b":1}}`,
+			b:    `{"a":{"b":2}}`,
+			diffLines: []string{
+				`@ ["a","b"]`,
+				`- 1`,
+				`+ 2`,
+			},
+		},
+		{
+			name: "nested object key change",
+			a:    `{"a":{"b":1}}`,
+			b:    `{"a":{"c":2}}`,
+			diffLines: []string{
+				`@ ["a","b"]`,
+				`- 1`,
+				`@ ["a","c"]`,
+				`+ 2`,
+			},
+		},
+		{
+			name: "parent key change with same nested object",
+			a:    `{"a":{"b":1}}`,
+			b:    `{"c":{"b":1}}`,
+			diffLines: []string{
+				`@ ["a"]`,
+				`- {"b":1}`,
+				`@ ["c"]`,
+				`+ {"b":1}`,
+			},
+		},
+		{
+			name: "string value change",
+			a:    `{"a":"bar"}`,
+			b:    `{"a":"baz"}`,
+			diffLines: []string{
+				`@ ["a"]`,
+				`- "bar"`,
+				`+ "baz"`,
+			},
+		},
+		{
+			name: "array string element change",
+			a:    `{"qux":["foobar","foobaz"]}`,
+			b:    `{"qux":["fooarrr","foobaz"]}`,
+			diffLines: []string{
+				`@ ["qux",0]`,
+				`[`,
+				`- "foobar"`,
+				`+ "fooarrr"`,
+				`  "foobaz"`,
+			},
+		},
+		{
+			name: "string addition from empty",
+			a:    `{"str":""}`,
+			b:    `{"str":"abc"}`,
+			diffLines: []string{
+				`@ ["str"]`,
+				`- ""`,
+				`+ "abc"`,
+			},
+		},
+		{
+			name: "string removal to empty",
+			a:    `{"str":"abc"}`,
+			b:    `{"str":""}`,
+			diffLines: []string{
+				`@ ["str"]`,
+				`- "abc"`,
+				`+ ""`,
+			},
+		},
+		{
+			name: "nested string change",
+			a:    `{"a":{"b":"hello"}}`,
+			b:    `{"a":{"b":"world"}}`,
+			diffLines: []string{
+				`@ ["a","b"]`,
+				`- "hello"`,
+				`+ "world"`,
+			},
+		},
+		{
+			name: "multiple string changes",
+			a:    `{"a":"foo","b":"bar"}`,
+			b:    `{"a":"baz","b":"qux"}`,
+			diffLines: []string{
+				`@ ["a"]`,
+				`- "foo"`,
+				`+ "baz"`,
+				`@ ["b"]`,
+				`- "bar"`,
+				`+ "qux"`,
+			},
+		},
+		{
+			name: "key change with same value",
+			a:    `{"a":"foo"}`,
+			b:    `{"b":"foo"}`,
+			diffLines: []string{
+				`@ ["a"]`,
+				`- "foo"`,
+				`@ ["b"]`,
+				`+ "foo"`,
+			},
+		},
+		{
+			name: "unicode string diff",
+			a:    `{"a":"こんにちは"}`,
+			b:    `{"a":"さようなら"}`,
+			diffLines: []string{
+				`@ ["a"]`,
+				`- "こんにちは"`,
+				`+ "さようなら"`,
+			},
+		},
+		{
+			name: "object to null",
+			a:    `{"a":1}`,
+			b:    `null`,
+			diffLines: []string{
+				`@ []`,
+				`- {"a":1}`,
+				`+ null`,
+			},
+		},
+		{
+			name: "null to object",
+			a:    `null`,
+			b:    `{"a":1}`,
+			diffLines: []string{
+				`@ []`,
+				`- null`,
+				`+ {"a":1}`,
+			},
+		},
+		{
+			name: "object to array",
+			a:    `{"a":1}`,
+			b:    `[1]`,
+			diffLines: []string{
+				`@ []`,
+				`- {"a":1}`,
+				`+ [1]`,
+			},
+		},
+		{
+			name: "array to object",
+			a:    `[1]`,
+			b:    `{"a":1}`,
+			diffLines: []string{
+				`@ []`,
+				`- [1]`,
+				`+ {"a":1}`,
+			},
+		},
+		{
+			name: "boolean to number",
+			a:    `true`,
+			b:    `1`,
+			diffLines: []string{
+				`@ []`,
+				`- true`,
+				`+ 1`,
+			},
+		},
+		{
+			name: "string to boolean",
+			a:    `"true"`,
+			b:    `true`,
+			diffLines: []string{
+				`@ []`,
+				`- "true"`,
+				`+ true`,
+			},
+		},
+		{
+			name: "void to value",
+			a:    ``,
+			b:    `42`,
+			diffLines: []string{
+				`@ []`,
+				`+ 42`,
+			},
+		},
+		{
+			name: "value to void",
+			a:    `42`,
+			b:    ``,
+			diffLines: []string{
+				`@ []`,
+				`- 42`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checkDiffRender(t, tt.a, tt.b, tt.diffLines...)
+		})
+	}
 }
 
 func checkDiffRender(t *testing.T, a, b string, diffLines ...string) {
@@ -83,16 +242,17 @@ func checkDiffRender(t *testing.T, a, b string, diffLines ...string) {
 	}
 
 	// Test without color
-	d := aJson.diff(bJson, nil, []Option{}, strictPatchStrategy).Render()
+	d := aJson.diff(bJson, nil, newOptions([]Option{}), strictPatchStrategy).Render()
 	if d != diff {
 		t.Errorf("%v.diff(%v) = %v. Want %v.", a, b, d, diff)
 	}
 
 	// Test with color
-	coloredDiff := aJson.diff(bJson, nil, []Option{}, strictPatchStrategy).Render(COLOR)
+	coloredDiff := aJson.diff(bJson, nil, newOptions([]Option{}), strictPatchStrategy).Render(COLOR)
 	strippedDiff := stripAnsiCodes(coloredDiff)
-	if strippedDiff != diff {
-		t.Errorf("%v.diff(%v) with color (stripped) = %v. Want %v.", a, b, strippedDiff, diff)
+	expectedDiffWithColorHeader := `^ "COLOR"` + "\n" + diff
+	if strippedDiff != expectedDiffWithColorHeader {
+		t.Errorf("%v.diff(%v) with color (stripped) = %v. Want %v.", a, b, strippedDiff, expectedDiffWithColorHeader)
 	}
 
 	// Verify that uncolored parts in string diffs match between + and - lines
@@ -118,152 +278,528 @@ func checkDiffRender(t *testing.T, a, b string, diffLines ...string) {
 
 // removeColoredParts returns the string with the colored parts (including the text between color codes) removed
 func removeColoredParts(s string) string {
-	result := ""
+	var result strings.Builder
 	inColor := false
-	for i := 0; i < len(s); i++ {
+	runes := []rune(s)
+
+	for i := 0; i < len(runes); i++ {
 		// detect a color code (starts coloring)
-		if !inColor && i+1 < len(s) && s[i] == '\033' && s[i+1] == '[' {
+		if !inColor && i+1 < len(runes) && runes[i] == '\033' && runes[i+1] == '[' {
 			inColor = true
 			i++ // skip '['
 			continue
 		}
 		// if not colored, add the character to the result
 		if !inColor {
-			result += string(s[i])
+			result.WriteRune(runes[i])
 		}
 		// detect the reset color code (ends coloring)
-		if inColor && i+1 < len(s) && s[i] == '[' && s[i+1] == '0' && i+2 < len(s) && s[i+2] == 'm' {
+		if inColor && i+2 < len(runes) && runes[i] == '[' && runes[i+1] == '0' && runes[i+2] == 'm' {
 			inColor = false
 			i += 2
 		}
 	}
-	return result
-}
-
-// stripAnsiCodes removes ANSI color escape sequences from a string
-func stripAnsiCodes(s string) string {
-	result := ""
-	inEscape := false
-
-	for i := 0; i < len(s); i++ {
-		if !inEscape && i+1 < len(s) && s[i] == '\033' && s[i+1] == '[' {
-			inEscape = true
-			i++ // skip the '['
-			continue
-		}
-		if inEscape {
-			if s[i] == 'm' {
-				inEscape = false
-			}
-			continue
-		}
-		result += string(s[i])
-	}
-	return result
+	return result.String()
 }
 
 func TestDiffRenderPatch(t *testing.T) {
-	testCases := []struct {
+	tests := []struct {
+		name    string
 		diff    string
 		patch   string
 		wantErr bool
-	}{{
-		diff: s(`@ ["foo"]`,
-			`+ 1`),
-		patch: s(`[{"op":"add","path":"/foo","value":1}]`),
-	}, {
-		diff: s(`@ ["foo"]`,
-			`- 1`),
-		patch: s(`[`,
-			`{"op":"test","path":"/foo","value":1},`,
-			`{"op":"remove","path":"/foo","value":1}`,
-			`]`),
-	}, {
-		diff: s(`@ ["foo"]`,
-			`- 1`,
-			`+ 2`),
-		patch: s(`[`,
-			`{"op":"test","path":"/foo","value":1},`,
-			`{"op":"remove","path":"/foo","value":1},`,
-			`{"op":"add","path":"/foo","value":2}`,
-			`]`),
-	}, {
-		diff: s(`@ [0]`,
-			`[`,
-			`- {}`,
-			`+ 0`,
-			`  []`,
-			`@ [2]`,
-			`  []`,
-			`- 0`),
-		patch: s(`[`,
-			`{"op":"test","path":"/1","value":[]},`,
-			`{"op":"test","path":"/0","value":{}},`,
-			`{"op":"remove","path":"/0","value":{}},`,
-			`{"op":"add","path":"/0","value":0},`,
-			`{"op":"test","path":"/1","value":[]},`,
-			`{"op":"test","path":"/2","value":0},`,
-			`{"op":"remove","path":"/2","value":0}`,
-			`]`),
-	}}
+	}{
+		{
+			name: "simple add operation",
+			diff: s(`@ ["foo"]`,
+				`+ 1`),
+			patch: s(`[{"op":"add","path":"/foo","value":1}]`),
+		},
+		{
+			name: "simple remove operation",
+			diff: s(`@ ["foo"]`,
+				`- 1`),
+			patch: s(`[`,
+				`{"op":"test","path":"/foo","value":1},`,
+				`{"op":"remove","path":"/foo","value":1}`,
+				`]`),
+		},
+		{
+			name: "replace operation",
+			diff: s(`@ ["foo"]`,
+				`- 1`,
+				`+ 2`),
+			patch: s(`[`,
+				`{"op":"test","path":"/foo","value":1},`,
+				`{"op":"remove","path":"/foo","value":1},`,
+				`{"op":"add","path":"/foo","value":2}`,
+				`]`),
+		},
+		{
+			name: "complex array operations",
+			diff: s(`@ [0]`,
+				`[`,
+				`- {}`,
+				`+ 0`,
+				`  []`,
+				`@ [2]`,
+				`  []`,
+				`- 0`),
+			patch: s(`[`,
+				`{"op":"test","path":"/1","value":[]},`,
+				`{"op":"test","path":"/0","value":{}},`,
+				`{"op":"remove","path":"/0","value":{}},`,
+				`{"op":"add","path":"/0","value":0},`,
+				`{"op":"test","path":"/1","value":[]},`,
+				`{"op":"test","path":"/2","value":0},`,
+				`{"op":"remove","path":"/2","value":0}`,
+				`]`),
+		},
+		{
+			name: "add to empty object",
+			diff: s(`@ ["key"]`,
+				`+ "value"`),
+			patch: s(`[{"op":"add","path":"/key","value":"value"}]`),
+		},
+		{
+			name: "remove from object",
+			diff: s(`@ ["key"]`,
+				`- "value"`),
+			patch: s(`[`,
+				`{"op":"test","path":"/key","value":"value"},`,
+				`{"op":"remove","path":"/key","value":"value"}`,
+				`]`),
+		},
+		{
+			name: "nested add operation",
+			diff: s(`@ ["a","b"]`,
+				`+ 1`),
+			patch: s(`[{"op":"add","path":"/a/b","value":1}]`),
+		},
+		{
+			name: "array element replacement",
+			diff: s(`@ [0]`,
+				`- 1`,
+				`+ 2`),
+			patch: s(`[`,
+				`{"op":"test","path":"/0","value":1},`,
+				`{"op":"remove","path":"/0","value":1},`,
+				`{"op":"add","path":"/0","value":2}`,
+				`]`),
+		},
+	}
 
-	for _, tc := range testCases {
-		diff, err := ReadDiffString(tc.diff)
-		if err != nil {
-			t.Errorf("Error reading diff: %v", err)
-		}
-		gotJson, err := diff.RenderPatch()
-		if err != nil && !tc.wantErr {
-			t.Errorf("Want no err. Got %v", err)
-		}
-		if err == nil && tc.wantErr {
-			t.Errorf("Want err. Got nil")
-		}
-		got, err := ReadJsonString(gotJson)
-		if err != nil {
-			t.Errorf("Error reading JSON Patch: %v", err)
-		}
-		want, err := ReadJsonString(tc.patch)
-		if err != nil {
-			t.Errorf("Error reading patch: %v", err)
-		}
-		if !want.Equals(got) {
-			t.Errorf("Want %v. Got %v", tc.patch, gotJson)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diff, err := ReadDiffString(tt.diff)
+			if err != nil {
+				t.Errorf("Error reading diff: %v", err)
+			}
+			gotJson, err := diff.RenderPatch()
+			if err != nil && !tt.wantErr {
+				t.Errorf("Want no err. Got %v", err)
+			}
+			if err == nil && tt.wantErr {
+				t.Errorf("Want err. Got nil")
+			}
+			got, err := ReadJsonString(gotJson)
+			if err != nil {
+				t.Errorf("Error reading JSON Patch: %v", err)
+			}
+			want, err := ReadJsonString(tt.patch)
+			if err != nil {
+				t.Errorf("Error reading patch: %v", err)
+			}
+			if !want.Equals(got) {
+				t.Errorf("Want %v. Got %v", tt.patch, gotJson)
+			}
+		})
 	}
 }
 
 func TestDiffRenderMerge(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
+		name  string
 		diff  string
 		merge string
-	}{{
-		diff: s(
-			`^ {"Merge":true}`,
-			`@ []`,
-			`+ 1`,
-		),
-		merge: `1`,
-	}, {
-		diff: s(
-			`^ {"Merge":true}`,
-			`@ ["foo"]`,
-			`+ 1`,
-		),
-		merge: `{"foo":1}`,
-	}}
+	}{
+		{
+			name: "simple merge add value",
+			diff: s(
+				`^ {"Merge":true}`,
+				`@ []`,
+				`+ 1`,
+			),
+			merge: `1`,
+		},
+		{
+			name: "merge add to object key",
+			diff: s(
+				`^ {"Merge":true}`,
+				`@ ["foo"]`,
+				`+ 1`,
+			),
+			merge: `{"foo":1}`,
+		},
+		{
+			name: "merge add nested value",
+			diff: s(
+				`^ {"Merge":true}`,
+				`@ ["a","b"]`,
+				`+ 1`,
+			),
+			merge: `{"a":{"b":1}}`,
+		},
+		{
+			name: "merge add string value",
+			diff: s(
+				`^ {"Merge":true}`,
+				`@ ["name"]`,
+				`+ "John"`,
+			),
+			merge: `{"name":"John"}`,
+		},
+		{
+			name: "merge add boolean value",
+			diff: s(
+				`^ {"Merge":true}`,
+				`@ ["active"]`,
+				`+ true`,
+			),
+			merge: `{"active":true}`,
+		},
+		{
+			name: "merge add null value",
+			diff: s(
+				`^ {"Merge":true}`,
+				`@ ["value"]`,
+				`+ null`,
+			),
+			merge: `{"value":null}`,
+		},
+		{
+			name: "merge remove to void",
+			diff: s(
+				`^ {"Merge":true}`,
+				`@ []`,
+				`+`,
+			),
+			merge: `null`,
+		},
+		{
+			name: "merge remove object key to void",
+			diff: s(
+				`^ {"Merge":true}`,
+				`@ ["key"]`,
+				`+`,
+			),
+			merge: `{"key":null}`,
+		},
+	}
 
-	for _, c := range cases {
-		d, err := ReadDiffString(c.diff)
-		if err != nil {
-			t.Errorf("Error reading diff: %v", err)
-		}
-		s, err := d.RenderMerge()
-		if err != nil {
-			t.Errorf("Error rendering diff as merge patch: %v", err)
-		}
-		if s != c.merge {
-			t.Errorf("Want %v. Got %v", c.merge, s)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			diff, err := ReadDiffString(tt.diff)
+			if err != nil {
+				t.Errorf("Error reading diff: %v", err)
+			}
+			got, err := diff.RenderMerge()
+			if err != nil {
+				t.Errorf("Error rendering diff as merge patch: %v", err)
+			}
+			if got != tt.merge {
+				t.Errorf("Want %v. Got %v", tt.merge, got)
+			}
+		})
+	}
+}
+
+func TestDiffElementOptionsRendering(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []Option
+		want    string
+	}{
+		{
+			name:    "no options",
+			options: []Option{},
+			want:    "",
+		},
+		{
+			name:    "single SET option",
+			options: []Option{SET},
+			want:    `^ "SET"` + "\n",
+		},
+		{
+			name:    "single MERGE option",
+			options: []Option{MERGE},
+			want:    `^ "MERGE"` + "\n",
+		},
+		{
+			name:    "single MULTISET option",
+			options: []Option{MULTISET},
+			want:    `^ "MULTISET"` + "\n",
+		},
+		{
+			name:    "single COLOR option",
+			options: []Option{COLOR},
+			want:    `^ "COLOR"` + "\n",
+		},
+		{
+			name:    "precision option",
+			options: []Option{Precision(0.01)},
+			want:    `^ {"precision":0.01}` + "\n",
+		},
+		{
+			name:    "setkeys option",
+			options: []Option{SetKeys("id", "name")},
+			want:    `^ {"setkeys":["id","name"]}` + "\n",
+		},
+		{
+			name:    "multiple simple options",
+			options: []Option{MERGE, COLOR},
+			want:    `^ "MERGE"` + "\n" + `^ "COLOR"` + "\n",
+		},
+		{
+			name:    "multiple mixed options",
+			options: []Option{SET, Precision(0.001), COLOR},
+			want:    `^ "SET"` + "\n" + `^ {"precision":0.001}` + "\n" + `^ "COLOR"` + "\n",
+		},
+		{
+			name:    "path option",
+			options: []Option{PathOption(Path{PathKey("users")}, SET)},
+			want:    `^ {"@":["users"],"^":["SET"]}` + "\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a DiffElement with the options to test rendering
+			element := DiffElement{
+				Options: tt.options,
+				Path:    Path{PathKey("test")},
+				Add:     []JsonNode{jsonString("value")},
+			}
+			rendered := element.Render()
+
+			// Extract just the options part (everything before "@ ")
+			parts := strings.Split(rendered, "@ ")
+			got := parts[0]
+
+			if got != tt.want {
+				t.Errorf("DiffElement options rendering = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDiffRenderWithOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		a         string
+		b         string
+		options   []Option
+		wantLines []string
+	}{
+		{
+			name:    "simple diff with SET option",
+			a:       `{"items":[1,2,3]}`,
+			b:       `{"items":[2,1,4]}`,
+			options: []Option{SET},
+			wantLines: []string{
+				`^ "SET"`,
+				`@ ["items",{}]`,
+				`- 3`,
+				`+ 4`,
+			},
+		},
+		{
+			name:    "simple diff with MERGE option",
+			a:       `{"a":1}`,
+			b:       `{"a":2}`,
+			options: []Option{MERGE},
+			wantLines: []string{
+				`^ "MERGE"`,
+				`@ ["a"]`,
+				`+ 2`,
+			},
+		},
+		{
+			name:    "diff with multiple options",
+			a:       `{"price":10.99}`,
+			b:       `{"price":11.05}`,
+			options: []Option{SET, Precision(0.001)},
+			wantLines: []string{
+				`^ "SET"`,
+				`^ {"precision":0.001}`,
+				`@ ["price"]`,
+				`- 10.99`,
+				`+ 11.05`,
+			},
+		},
+		{
+			name:    "diff with no options (no header)",
+			a:       `{"a":1}`,
+			b:       `{"a":2}`,
+			options: []Option{},
+			wantLines: []string{
+				`@ ["a"]`,
+				`- 1`,
+				`+ 2`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aJson, err := ReadJsonString(tt.a)
+			if err != nil {
+				t.Fatalf("Error reading a: %v", err)
+			}
+			bJson, err := ReadJsonString(tt.b)
+			if err != nil {
+				t.Fatalf("Error reading b: %v", err)
+			}
+
+			diff := aJson.Diff(bJson, tt.options...)
+			got := diff.Render(tt.options...)
+
+			want := ""
+			for _, line := range tt.wantLines {
+				want += line + "\n"
+			}
+
+			if got != want {
+				t.Errorf("Diff.Render() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestDiffRoundTrip(t *testing.T) {
+	tests := []struct {
+		name    string
+		a       string
+		b       string
+		options []Option
+	}{
+		{
+			name:    "round-trip with SET option",
+			a:       `{"items":[1,2,3]}`,
+			b:       `{"items":[2,1,4]}`,
+			options: []Option{SET},
+		},
+		{
+			name:    "round-trip with MERGE option",
+			a:       `{"a":1}`,
+			b:       `{"a":2}`,
+			options: []Option{MERGE},
+		},
+		{
+			name:    "round-trip with multiple options",
+			a:       `{"price":10.99}`,
+			b:       `{"price":11.05}`,
+			options: []Option{SET, Precision(0.001)},
+		},
+		{
+			name:    "round-trip with path option",
+			a:       `{"users":[{"id":1,"name":"alice"}]}`,
+			b:       `{"users":[{"id":1,"name":"bob"}]}`,
+			options: []Option{PathOption(Path{PathKey("users")}, SET)},
+		},
+		{
+			name:    "round-trip with no options",
+			a:       `{"a":1}`,
+			b:       `{"a":2}`,
+			options: []Option{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create original diff
+			aJson, err := ReadJsonString(tt.a)
+			if err != nil {
+				t.Fatalf("Error reading a: %v", err)
+			}
+			bJson, err := ReadJsonString(tt.b)
+			if err != nil {
+				t.Fatalf("Error reading b: %v", err)
+			}
+
+			originalDiff := aJson.Diff(bJson, tt.options...)
+
+			// Render diff to string
+			renderedDiff := originalDiff.Render(tt.options...)
+
+			// Parse diff back from string
+			parsedDiff, err := ReadDiffString(renderedDiff)
+			if err != nil {
+				t.Fatalf("Error parsing rendered diff: %v", err)
+			}
+
+			// Render parsed diff again (without passing options since they're now stored in DiffElement.Options)
+			reRenderedDiff := parsedDiff.Render()
+
+			// Should be identical (round-trip) unless MERGE option causes normalization
+			expectedRerendered := renderedDiff
+			// Special case: MERGE option causes {"Merge":true} to be normalized to "MERGE"
+			if len(tt.options) > 0 {
+				for _, opt := range tt.options {
+					if _, isMerge := opt.(mergeOption); isMerge {
+						// Replace the legacy format with modern format for comparison
+						expectedRerendered = strings.ReplaceAll(expectedRerendered, `^ {"Merge":true}`+"\n", "")
+						break
+					}
+				}
+			}
+
+			if expectedRerendered != reRenderedDiff {
+				t.Errorf("Round-trip failed.\nOriginal:\n%s\nRe-rendered:\n%s\nExpected:\n%s", renderedDiff, reRenderedDiff, expectedRerendered)
+			}
+		})
+	}
+}
+
+func TestLegacyMetadataRoundTrip(t *testing.T) {
+	// Test that legacy {"Merge":true} format gets normalized to "MERGE"
+	legacyDiff := `^ {"Merge":true}
+@ ["a"]
++ 2
+`
+
+	// Parse legacy format
+	parsedDiff, err := ReadDiffString(legacyDiff)
+	if err != nil {
+		t.Fatalf("Error parsing legacy diff: %v", err)
+	}
+
+	// Should have both Metadata.Merge=true and Options=[MERGE]
+	if len(parsedDiff) != 1 {
+		t.Fatalf("Expected 1 diff element, got %d", len(parsedDiff))
+	}
+
+	element := parsedDiff[0]
+	if !element.Metadata.Merge {
+		t.Error("Expected Metadata.Merge to be true")
+	}
+
+	if len(element.Options) != 1 {
+		t.Fatalf("Expected 1 option, got %d", len(element.Options))
+	}
+
+	if _, ok := element.Options[0].(mergeOption); !ok {
+		t.Errorf("Expected MERGE option, got %T", element.Options[0])
+	}
+
+	// Render should normalize to modern format
+	rendered := parsedDiff.Render()
+	expectedModern := `^ "MERGE"
+@ ["a"]
++ 2
+`
+
+	if rendered != expectedModern {
+		t.Errorf("Legacy format should normalize to modern.\nGot:\n%s\nExpected:\n%s", rendered, expectedModern)
 	}
 }

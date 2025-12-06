@@ -1,6 +1,7 @@
 package jd
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -65,8 +66,9 @@ func checkHash(ctx *testContext, a, b string, wantSame bool) {
 	if err != nil {
 		ctx.t.Fatalf("%v", err.Error())
 	}
-	hashA := nodeA.hashCode(ctx.options)
-	hashB := nodeB.hashCode(ctx.options)
+	o := refine(&options{retain: ctx.options}, nil)
+	hashA := nodeA.hashCode(o)
+	hashB := nodeB.hashCode(o)
 	if wantSame && hashA != hashB {
 		ctx.t.Errorf("%v.hashCode = %v. %v.hashCode = %v. Want the same.",
 			a, hashA, b, hashB)
@@ -161,7 +163,6 @@ func m(m ...Option) []Option {
 type testContext struct {
 	t       *testing.T
 	options []Option
-	opts    []Option
 }
 
 func newTestContext(t *testing.T) *testContext {
@@ -174,4 +175,11 @@ func newTestContext(t *testing.T) *testContext {
 func (tc *testContext) withOptions(options ...Option) *testContext {
 	tc.options = append(tc.options, options...)
 	return tc
+}
+
+// stripAnsiCodes removes ANSI color escape sequences from a string
+func stripAnsiCodes(input string) string {
+	// Regular expression to match ANSI escape codes
+	re := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	return re.ReplaceAllString(input, "")
 }

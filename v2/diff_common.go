@@ -3,11 +3,14 @@ package jd
 func diff(
 	a, b JsonNode,
 	p Path,
-	options []Option,
+	opts *options,
 	strategy patchStrategy,
 ) Diff {
 	d := make(Diff, 0)
-	if a.Equals(b) {
+	if !opts.diffingOn {
+		return d // Return empty diff when diffing is off
+	}
+	if a.equals(b, opts) {
 		return d
 	}
 	var de DiffElement

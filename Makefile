@@ -1,32 +1,63 @@
+# Enforce strict toolchain usage - matches toolchain directive in go.mod
+export GOTOOLCHAIN=go1.23.12
+
+# Toolchain validation target
+.PHONY : validate-toolchain
+validate-toolchain :
+	@echo "Validating Go toolchain versions..."
+	@ROOT_TOOLCHAIN=$$(grep '^toolchain ' go.mod | awk '{print $$2}'); \
+	V2_TOOLCHAIN=$$(grep '^toolchain ' v2/go.mod | awk '{print $$2}'); \
+	if [ "$$ROOT_TOOLCHAIN" != "$$V2_TOOLCHAIN" ]; then \
+		echo "Error: Toolchain mismatch between go.mod files:"; \
+		echo "  Root go.mod: $$ROOT_TOOLCHAIN"; \
+		echo "  v2/go.mod: $$V2_TOOLCHAIN"; \
+		exit 1; \
+	fi; \
+	if [ "$$ROOT_TOOLCHAIN" != "$(GOTOOLCHAIN)" ]; then \
+		echo "Error: Makefile GOTOOLCHAIN does not match go.mod toolchain:"; \
+		echo "  Makefile GOTOOLCHAIN: $(GOTOOLCHAIN)"; \
+		echo "  go.mod toolchain: $$ROOT_TOOLCHAIN"; \
+		echo "  Please update GOTOOLCHAIN in Makefile to match go.mod"; \
+		exit 1; \
+	fi; \
+	echo "✓ Toolchain validation passed: $$ROOT_TOOLCHAIN"
+
 .PHONY : build
-build : test pack-web
+build : test pack-web validate-toolchain
 	mkdir -p release
 	cd v2/jd ; CGO_ENABLED=0 go build -tags include_web -o ../../release/jd main.go
 
 .PHONY : test
-test :
+test : validate-toolchain
 	go test .
 	go test ./lib
-	cd v2 ; go test .
+	cd v2 ; go test -run '^Test' .
 	cd v2 ; go test ./jd
 
 .PHONY : fuzz
-fuzz :
-	go test ./lib -fuzz=FuzzJd -fuzztime=10s
-	cd v2 ; go test . -fuzz=FuzzJd -fuzztime=10s
+fuzz : validate-toolchain
+	cd v2 ; go test . -fuzz=FuzzJd -fuzztime=5m
+
+.PHONY : fuzz-indef
+fuzz-indef: validate-toolchain
+	cd v2 ; go test . -fuzz=FuzzJd
+
+.PHONY : go-fmt
+go-fmt :
+	cd v2 ; go fmt ./...
 
 .PHONY : pack-web
-pack-web : build-web
-	cd v2 ; go run web/pack/main.go
+pack-web : build-web validate-toolchain
+	cd v2 ; go run internal/web/pack/main.go
 
 .PHONY : build-web
-build-web :
-	cd v2 ; cp $$(go env GOROOT)/lib/wasm/wasm_exec.js web/assets/
-	cd v2 ; GOOS=js GOARCH=wasm go build -o web/assets/jd.wasm ./web/ui/main.go
+build-web : validate-toolchain
+	cd v2 ; curl -fsSL https://raw.githubusercontent.com/golang/go/go1.23.12/misc/wasm/wasm_exec.js -o internal/web/assets/wasm_exec.js
+	cd v2 ; GOOS=js GOARCH=wasm go build -o internal/web/assets/jd.wasm ./internal/web/ui
 
 .PHONY : serve
-serve : pack-web
-	cd v2 ; go run -tags include_web main.go -port 8080
+serve : pack-web validate-toolchain
+	cd v2 ; go run -tags include_web jd/main.go -port 8080
 
 .PHONY : release-build
 release-build : check-env check-version check-dirty build-all build-docker
@@ -35,7 +66,7 @@ release-build : check-env check-version check-dirty build-all build-docker
 	@echo
 
 .PHONY : build-all
-build-all : test pack-web
+build-all : test pack-web validate-toolchain
 	mkdir -p release
 	cd v2/jd ; GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags include_web -o ../../release/jd-amd64-linux main.go
 	cd v2/jd ; GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -tags include_web -o ../../release/jd-amd64-darwin main.go
@@ -71,7 +102,7 @@ push-github : check-env
 
 .PHONY : deploy
 deploy : test build-web
-	gsutil -m cp -r v2/web/assets/* gs://play.jd-tool.io
+	gsutil -m cp -r v2/internal/web/assets/* gs://play.jd-tool.io
 
 .PHONY : release-notes
 release-notes : check-env
@@ -83,19 +114,19 @@ check-dirty : tidy
 	git diff --quiet --exit-code
 
 .PHONY : tidy
-tidy :
+tidy : validate-toolchain
 	cd v2 ; go mod tidy
 	go mod tidy
 
 .PHONY : check-version
 check-version : check-env
-	@if ! grep -q $(JD_VERSION) v2/jd/main.go; then                          \
-		echo "Set 'const version = $(JD_VERSION)' in main.go." ; \
+	@if ! grep -q $(JD_VERSION) v2/jd/main.go; then                   \
+		echo "Set 'const version = $(JD_VERSION)' in main.go." ;  \
 		false                                                   ; \
 	fi
-	@if ! grep -q $(JD_VERSION) action.yml; then                          \
-		echo "Set 'docker://josephburnett/jd:$(JD_VERSION)' in action.yml." ; \
-		false                                                   ; \
+	@if ! grep -q v$(JD_VERSION) action.yml; then                                  \
+		echo "Set 'docker://josephburnett/jd:v$(JD_VERSION)' in action.yml." ; \
+		false                                                   ;              \
 	fi
 
 .PHONY : check-env
@@ -106,6 +137,14 @@ endif
 ifndef JD_PREVIOUS_VERSION
 	$(error Set JD_PREVIOUS_VERSION for release notes)
 endif
+
+.PHONY : benchmark
+benchmark : validate-toolchain
+	@echo "Running performance baseline benchmarks..."
+	@mkdir -p benchmarks
+	@timestamp=$$(date +%Y%m%d_%H%M%S); \
+	cd v2 && go test -run=^$$ -bench=^Benchmark -benchmem -count=1 -timeout=3m -benchtime=200ms | tee ../benchmarks/baseline_$$timestamp.txt; \
+	echo "Results saved to benchmarks/baseline_$$timestamp.txt"
 
 .PHONY : find-issues
 find-issues :

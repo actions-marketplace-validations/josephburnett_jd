@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/josephburnett/jd/v2"
-	"github.com/josephburnett/jd/v2/web/serve"
+	"github.com/josephburnett/jd/v2/internal/web/serve"
 )
 
 const version = "HEAD"
@@ -25,6 +25,7 @@ var (
 	format        = flag.String("f", "", "Diff format (jd, patch, merge)")
 	gitDiffDriver = flag.Bool("git-diff-driver", false, "Use jd as a git diff driver.")
 	mset          = flag.Bool("mset", false, "Arrays as multisets")
+	opts          = flag.String("opts", "[]", "JSON array of options")
 	output        = flag.String("o", "", "Output file")
 	patch         = flag.Bool("p", false, "Patch mode")
 	port          = flag.Int("port", 0, "Serve web UI on port")
@@ -35,6 +36,7 @@ var (
 	ver           = flag.Bool("version", false, "Print version and exit")
 	yaml          = flag.Bool("yaml", false, "Read and write YAML")
 
+	// This is here so that existing user commands that provide -v2 don't fail.
 	_ = flag.Bool("v2", true, "Use the jd v2 library (deprecated, has no effect)")
 )
 
@@ -63,7 +65,7 @@ func main() {
 		options []jd.Option
 		err     error
 	)
-	options, err = parseMetadata()
+	options, err = parseOptions()
 	if err != nil {
 		errorAndExit(err)
 	}
@@ -135,11 +137,14 @@ func serveWeb(port string) error {
 	return http.ListenAndServe(":"+port, nil)
 }
 
-func parseMetadata() ([]jd.Option, error) {
+func parseOptions() ([]jd.Option, error) {
 	if *precision != 0.0 && (*set || *mset) {
 		return nil, fmt.Errorf("-precision cannot be used with -set or -mset because they use hashcodes")
 	}
-	options := make([]jd.Option, 0)
+	options, err := jd.ReadOptionsString(*opts)
+	if err != nil {
+		return nil, err
+	}
 	if *set {
 		options = append(options, jd.SET)
 	}
@@ -161,7 +166,9 @@ func parseMetadata() ([]jd.Option, error) {
 	if *format == "merge" {
 		options = append(options, jd.MERGE)
 	}
-	options = append(options, jd.Precision(*precision))
+	if *precision != 0.0 {
+		options = append(options, jd.Precision(*precision))
+	}
 	return options, nil
 }
 
@@ -175,17 +182,28 @@ func printUsageAndExit() {
 		`When FILE2 is omitted the second input is read from STDIN.`,
 		`When patching (-p) FILE1 is a diff.`,
 		``,
+		`Options Header: When options are provided, they are displayed at the`,
+		`beginning of the diff output to show how the diff was produced:`,
+		`  ^ "SET"                     (arrays treated as sets)`,
+		`  ^ {"precision":0.001}       (number comparison precision)`,
+		`  ^ {"setkeys":["id"]}        (object matching keys)`,
+		`This helps understand diff behavior and enables reproducible results.`,
+		``,
 		`Options:`,
 		`  -color       Print color diff.`,
 		`  -p           Apply patch FILE1 to FILE2 or STDIN.`,
 		`  -o=FILE3     Write to FILE3 instead of STDOUT.`,
-		`  -set         Treat arrays as sets.`,
-		`  -mset        Treat arrays as multisets (bags).`,
-		`  -setkeys     Keys to identify set objects`,
+		`  -opts='[]'   JSON array of options. Supports global options and PathOptions.`,
+		`               Global: ["SET"], ["MULTISET"], [{"precision":0.1}], [{"setkeys":["id"]}], ["DIFF_ON"], ["DIFF_OFF"]`,
+		`               PathOptions target specific paths: [{"@":["path"],"^":["SET"]}]`,
+		`               Example: [{"@":["users"],"^":["SET"]},{"@":["scores",0],"^":[{"precision":0.1}]}]`,
+		`  -set         Treat arrays as sets. Same as -opts='["SET"]'.`,
+		`  -mset        Treat arrays as multisets (bags). Same as -opts='["MULTISET"]'.`,
+		`  -setkeys     Keys to identify set objects. Same as -opts='[{"setkeys":["key1","key2"]}]'.`,
 		`  -yaml        Read and write YAML instead of JSON.`,
 		`  -port=N      Serve web UI on port N`,
 		`  -precision=N Maximum absolute difference for numbers to be equal.`,
-		`               Example: -precision=0.00001`,
+		`               Same as -opts='[{"precision":N}]'. Example: -precision=0.00001`,
 		`  -f=FORMAT    Read and write diff in FORMAT "jd" (default), "patch" (RFC 6902) or`,
 		`               "merge" (RFC 7386)`,
 		`  -t=FORMATS   Translate FILE1 between FORMATS. Supported formats are "jd",`,
@@ -200,6 +218,10 @@ func printUsageAndExit() {
 		`  jd -set a.json b.json`,
 		`  jd -f patch a.json b.json`,
 		`  jd -f merge a.json b.json`,
+		`  jd -opts='[{"@":["items"],"^":["SET"]}]' a.json b.json`,
+		`  jd -opts='[{"@":["temperature"],"^":[{"precision":0.1}]}]' a.json b.json`,
+		`  jd -opts='[{"@":["timestamp"],"^":["DIFF_OFF"]}]' a.json b.json`,
+		`  jd -opts='[{"@":[],"^":["DIFF_OFF"]},{"@":["userdata"],"^":["DIFF_ON"]}]' a.json b.json`,
 		``,
 		`Version: ` + version,
 		``,
@@ -261,6 +283,8 @@ func diff(a, b string, options []jd.Option) (string, bool, error) {
 	}
 	diff := aNode.Diff(bNode, options...)
 	var renderOptions []jd.Option
+	// Include all the original options to show in the header
+	renderOptions = append(renderOptions, options...)
 	if *color {
 		renderOptions = append(renderOptions, jd.COLOR)
 	}

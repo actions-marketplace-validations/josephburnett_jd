@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>jd</title>
+  </head>
+  <body>
+    <p>
+      <pre><legend id="command"
+		   style="font-size:2em">jd a.json b.json</legend></pre>
+    </p>
+    <p id="crash" style="color:red"></p>
+    
+    <!-- Operation Section -->
+    <p style="margin: 10px 0;">
+      <strong style="font-weight: bold;">Operation:</strong>
+      <span id="mode-diff" style="cursor: pointer; color: #080; text-decoration: underline; margin: 0 5px;">diff</span> |
+      <span id="mode-patch" style="cursor: pointer; margin: 0 5px;">patch</span>
+      <input type="hidden" name="mode" value="diff">
+    </p>
+
+    <!-- Format Section -->
+    <p style="margin: 10px 0;">
+      <strong style="font-weight: bold;">Format:</strong>
+      <span id="format-json" style="cursor: pointer; color: #080; text-decoration: underline; margin: 0 5px;">json</span> |
+      <span id="format-yaml" style="cursor: pointer; margin: 0 5px;">yaml</span>
+      <input type="hidden" name="format" value="json">
+    </p>
+    
+    <!-- Diff Format Section -->
+    <p style="margin: 10px 0;">
+      <strong style="font-weight: bold;">Diff format:</strong>
+      <span id="diff-format-jd" style="cursor: pointer; color: #080; text-decoration: underline; margin: 0 3px;">jd</span> |
+      <span id="diff-format-patch" style="cursor: pointer; margin: 0 3px;">patch (RFC 6902)</span> |
+      <span id="diff-format-merge" style="cursor: pointer; margin: 0 3px;">merge (RFC 7386)</span>
+      <input type="hidden" name="diff-format" value="jd">
+    </p>
+
+    <p style="width:50%;float:left">
+      <legend id="a-label"
+	      for="a-json"
+	      style="text-align:center;font-size:2em"
+	      >a.json</legend>
+      <textarea id="a-json"
+		rows="15"
+		style="width:97%;border:solid 3px #080"
+		></textarea>
+      <legend id="a-error"
+	      for="a-json"></legend>
+    </p>
+    <p style="width:50%;float:left">
+      <legend id="b-label"
+	      for="b-json"
+	      style="text-align:center;font-size:2em"
+	      >b.json</legend>
+      <textarea id="b-json"
+		rows="15"
+		style="width:97%;border:solid 3px #080"
+		></textarea>
+      <legend id="b-error"
+	      for="b-json"></legend>
+    </p>
+    <p style="width:100%;float:left">
+      <legend id="diff-label"
+	      style="text-align:center;font-size:2em"
+	      >diff</legend>
+      <textarea id="diff"
+		rows="10"
+		style="width:98.5%;border:solid 3px #ccc"
+		></textarea>
+      <legend id="diff-error"
+	      for="diff"></legend>
+    </p>
+    <!-- Options Section -->
+    <div id="options-section" style="margin: 20px 0;">
+      <legend style="font-size:2em; margin-bottom: 15px;">Options</legend>
+      <p>
+        <legend style="font-size:1.2em">Options JSON:</legend>
+        <textarea id="options-json"
+                  rows="3"
+                  style="width:98.5%; font-family: monospace;"
+                  placeholder="[]">[]</textarea>
+        <div id="validation-error" style="color: red; font-size: 0.9em;"></div>
+      </p>
+      <p>
+        <legend style="font-size:1.1em">Examples:</legend>
+        <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
+          <button type="button" id="example-set" style="padding: 5px 10px;">Global SET</button>
+          <button type="button" id="example-multiset" style="padding: 5px 10px;">Global MULTISET</button>
+          <button type="button" id="example-precision" style="padding: 5px 10px;">Precision</button>
+          <button type="button" id="example-setkeys" style="padding: 5px 10px;">SetKeys</button>
+          <button type="button" id="example-path-set" style="padding: 5px 10px;">Path SET</button>
+          <button type="button" id="example-path-precision" style="padding: 5px 10px;">Path Precision</button>
+          <button type="button" id="example-selective-diff" style="padding: 5px 10px;">Selective Diff</button>
+          <button type="button" id="example-mixed" style="padding: 5px 10px;">Mixed</button>
+          <button type="button" id="example-clear" style="padding: 5px 10px;">Clear</button>
+        </div>
+      </p>
+    </div>
+    <legend id="about"
+	    style="font-size:2em"
+	    >about</legend>
+    <p>
+      <b>jd</b> is a free and open-source tool for comparing
+      <a href="https://www.json.org">JSON</a>
+      or <a href="https://yaml.org/">YAML</a> values. The output
+      (diff) is easy for humans to read and can also be used to
+      programmatically modify (patch) other values. It looks similar to
+      the
+      <a href="https://www.gnu.org/software/diffutils/manual/html_node/Example-Unified.html#Example-Unified">unified
+      diff format</a>. Read more about the diff
+      language <a href="https://github.com/josephburnett/jd/blob/master/README.md#diff-language">here</a>.
+    </p>
+    <p>
+      This page is a web interface for jd. Enter two JSON values in
+      the a.json and b.json fields and the output will be shown in the
+      diff field. Switch the Options to patch and the diff will be
+      applied to a.json to produce b.json. Switch the format to YAML
+      to read and write YAML instead of JSON. The tool runs entirely
+      in the browser and no data is sent outside the page. Its safe to
+      use.
+    </p>
+    <p>
+      jd is also available as
+      a <a href="https://github.com/josephburnett/jd/releases">commandline
+      tool</a> and
+      a <a href="https://github.com/josephburnett/jd/tree/master/lib">golang
+      library</a>. The source code is available
+      at <a href="https://github.com/josephburnett/jd">https://github.com/josephburnett/jd</a>.
+      Bug reports, questions and suggestions
+      are <a href="https://github.com/josephburnett/jd/issues">welcome</a>.
+    </p>
+    <script src="wasm_exec.js"></script>
+    <script>
+      const go = new Go();
+      WebAssembly.instantiateStreaming(fetch("jd.wasm"), go.importObject).then((result) => {
+    	  go.run(result.instance);
+      });
+    </script>
+  </body>
+</html>
