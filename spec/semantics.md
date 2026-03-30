@@ -105,24 +105,6 @@ Diff:
 - **Duplicates counted**: `[1,1,2]` differs from `[1,2]`
 - Tracks element frequency
 
-#### MERGE
-```
-^ "MERGE"
-```
-- Enables merge-patch semantics (RFC 7386)
-- **Null removes** object properties
-- **Objects merge** recursively
-- **Arrays replace** entirely
-
-#### COLOR
-```
-^ "COLOR"
-```
-- Adds ANSI color codes to output
-- **Red** for removals (- lines)
-- **Green** for additions (+ lines)  
-- **Unchanged** context lines remain uncolored
-
 #### Precision
 ```
 ^ {"precision": 0.001}
@@ -132,9 +114,9 @@ Diff:
 - **Absolute difference**: `|a - b| <= precision`
 - Incompatible with SET/MULTISET (uses hashing)
 
-#### SetKeys
+#### Keys
 ```
-^ {"setkeys": ["id", "name"]}
+^ {"keys": ["id", "name"]}
 ```
 - Defines object matching keys for arrays
 - Objects with same key values are considered identical
@@ -249,12 +231,12 @@ Changes:
 + 4     (add new)
 ```
 
-## Object Matching with SetKeys
+## Object Matching with Keys
 
-For arrays containing objects, SetKeys enables object-level comparison:
+For arrays containing objects, Keys enables object-level comparison:
 
 ```
-^ {"setkeys": ["id"]}
+^ {"keys": ["id"]}
 
 A: [{"id": "user1", "name": "Alice", "age": 25}]
 B: [{"id": "user1", "name": "Alice", "age": 26}]
@@ -275,9 +257,13 @@ Result:
 
 ### Multiple Keys
 ```
-^ {"setkeys": ["type", "id"]}
+^ {"keys": ["type", "id"]}
 ```
 Objects match when ALL specified keys have equal values.
+
+### Duplicate Identity Keys
+
+When multiple objects in the same array share the same identity key values under set semantics, the behavior is undefined. Implementations MAY reject this as an error, silently pick one object, or handle it in any other way. Users should ensure identity keys are unique within each array.
 
 ## Patch Application
 
@@ -296,14 +282,6 @@ For array operations with context:
 - **After context** must match elements following the change  
 - **Mismatched context** produces application error
 
-### Merge Semantics
-
-When MERGE option is present:
-- **Null values remove** object properties
-- **Objects merge recursively** rather than replacing
-- **Arrays replace entirely** (no element-wise merging)
-- **Void values** (empty +) set properties to null
-
 ## Error Conditions
 
 ### Path Resolution Errors
@@ -315,9 +293,14 @@ When MERGE option is present:
 - **Invalid JSON**: Malformed JSON values
 - **Type conflicts**: Cannot convert between incompatible types
 
-### Option Conflicts  
-- **Precision with sets**: Precision requires ordering, sets don't preserve order
-- **Conflicting PathOptions**: Multiple incompatible options on same path
+### Option Conflicts
+Options fall into two groups that are mutually exclusive:
+- **Equivalence modifiers**: Options that alter value equality (e.g., `precision`, future case insensitivity)
+- **Set semantics**: Options that use hash-based comparison (`SET`, `MULTISET`)
+
+Implementations MUST reject combinations across these groups because set operations require hash-stable equivalence. The `keys` option belongs to neither group and is compatible with both.
+
+Conflict detection within nested PathOptions is optional; implementations that return `(Diff, error)` can detect conflicts lazily during traversal.
 
 ### Context Errors
 - **Context mismatch**: Expected context doesn't match actual values
@@ -343,4 +326,4 @@ When MERGE option is present:
 - **Unicode normalization**: Should handle equivalent Unicode representations
 - **JSON canonicalization**: Numbers should be normalized (e.g., 1.0 → 1)
 
-This semantic specification defines the full behavior of jd diff operations. Implementations following these semantics will produce consistent, interoperable results.
+This semantic specification defines the full behavior of structural diff operations. Implementations following these semantics will produce consistent, interoperable results.

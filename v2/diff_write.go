@@ -4,8 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-
-	"golang.org/x/exp/slices"
+	"slices"
 )
 
 const (
@@ -52,7 +51,8 @@ func colorStringMarshal(str jsonString, commonSequence []JsonNode, colorCode str
 
 func (d DiffElement) Render(opts ...Option) string {
 	o := refine(&options{retain: opts}, nil)
-	isColor := checkOption[colorOption](o)
+	isColorWords := checkOption[colorWordsOption](o)
+	isColor := checkOption[colorOption](o) || isColorWords
 	isMerge := checkOption[mergeOption](o) || d.Metadata.Merge
 	b := bytes.NewBuffer(nil)
 	// Render options from the Options field if present, otherwise fall back to metadata
@@ -84,11 +84,12 @@ func (d DiffElement) Render(opts ...Option) string {
 	b.Write([]byte(d.Path.JsonNode().Json()))
 	b.WriteString("\n")
 
-	// Check if this is a single string diff. If so, compute the common sequence for a character
-	// level diff.
+	// Check if this is a single string diff. If COLOR_WORDS is set, compute the common
+	// sequence for a character-level diff. This LCS is O(n^2) in time and memory so it
+	// is only performed when explicitly requested.
 	var commonSequence []JsonNode
 	isSingleStringDiff := false
-	if len(d.Remove) == 1 && len(d.Add) == 1 {
+	if isColorWords && len(d.Remove) == 1 && len(d.Add) == 1 {
 		oldStr, oldOk := d.Remove[0].(jsonString)
 		newStr, newOk := d.Add[0].(jsonString)
 		if oldOk && newOk {
@@ -248,7 +249,7 @@ func (d Diff) RenderPatch() (string, error) {
 			prevPath := element.Path.clone()
 			prevPath[len(prevPath)-1] = prevIndex
 			prevPathStr, err := writePointer(prevPath.JsonNode().(jsonArray))
-			if err != nil {
+			if err != nil { //jd:nocover — path was already validated
 				return "", err
 			}
 			patch = append(patch, patchElement{
@@ -276,7 +277,7 @@ func (d Diff) RenderPatch() (string, error) {
 			nextPath := element.Path.clone()
 			nextPath[len(nextPath)-1] = nextIndex
 			nextPathStr, err := writePointer(nextPath.JsonNode().(jsonArray))
-			if err != nil {
+			if err != nil { //jd:nocover — path was already validated
 				return "", err
 			}
 			patch = append(patch, patchElement{
@@ -314,7 +315,7 @@ func (d Diff) RenderPatch() (string, error) {
 		}
 	}
 	patchJson, err := json.Marshal(patch)
-	if err != nil {
+	if err != nil { //jd:nocover — patchElement fields are all JSON-safe types
 		return "", err
 	}
 	return string(patchJson), nil

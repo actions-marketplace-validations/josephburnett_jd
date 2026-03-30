@@ -42,6 +42,8 @@ func NewOption(a any) (Option, error) {
 			return MULTISET, nil
 		case "COLOR":
 			return COLOR, nil
+		case "COLOR_WORDS":
+			return COLOR_WORDS, nil
 		case "DIFF_ON":
 			return DIFF_ON, nil
 		case "DIFF_OFF":
@@ -62,10 +64,13 @@ func NewOption(a any) (Option, error) {
 					}
 					prec = f
 					return Precision(prec), nil
-				case "setkeys":
+				case "keys", "setkeys":
 					untypedKeys, ok := v.([]any)
 					if !ok {
 						return nil, fmt.Errorf("wanted []string. got %T", v)
+					}
+					if len(untypedKeys) == 0 {
+						return nil, fmt.Errorf("keys must not be empty")
 					}
 					keys := []string{}
 					for _, untypedKey := range untypedKeys {
@@ -76,6 +81,12 @@ func NewOption(a any) (Option, error) {
 						keys = append(keys, key)
 					}
 					return SetKeys(keys...), nil
+				case "file":
+					s, ok := v.(string)
+					if !ok {
+						return nil, fmt.Errorf("wanted string. got %T", v)
+					}
+					return File(s), nil
 				case "Merge":
 					b, ok := v.(bool)
 					if !ok {
@@ -139,9 +150,6 @@ func (o mergeOption) isOption() {}
 func (o mergeOption) MarshalJSON() ([]byte, error) {
 	return json.Marshal("MERGE")
 }
-func (o mergeOption) UnmarshalJSON(b []byte) error {
-	return unmarshalAsString("MERGE", b)
-}
 func (o mergeOption) String() string { return "MERGE" }
 
 type setOption struct{}
@@ -152,9 +160,6 @@ func (o setOption) isOption() {}
 func (o setOption) MarshalJSON() ([]byte, error) {
 	return json.Marshal("SET")
 }
-func (o setOption) UnmarshalJSON(b []byte) error {
-	return unmarshalAsString("SET", b)
-}
 
 type multisetOption struct{}
 
@@ -163,9 +168,6 @@ var MULTISET = multisetOption{}
 func (o multisetOption) isOption() {}
 func (o multisetOption) MarshalJSON() ([]byte, error) {
 	return json.Marshal("MULTISET")
-}
-func (o multisetOption) UnmarshalJSON(b []byte) error {
-	return unmarshalAsString("MULTISET", b)
 }
 
 type colorOption struct{}
@@ -176,8 +178,14 @@ func (o colorOption) isOption() {}
 func (o colorOption) MarshalJSON() ([]byte, error) {
 	return json.Marshal("COLOR")
 }
-func (o colorOption) UnmarshalJSON(b []byte) error {
-	return unmarshalAsString("COLOR", b)
+
+type colorWordsOption struct{}
+
+var COLOR_WORDS = colorWordsOption{}
+
+func (o colorWordsOption) isOption() {}
+func (o colorWordsOption) MarshalJSON() ([]byte, error) {
+	return json.Marshal("COLOR_WORDS")
 }
 
 type diffOnOption struct{}
@@ -188,9 +196,6 @@ func (o diffOnOption) isOption() {}
 func (o diffOnOption) MarshalJSON() ([]byte, error) {
 	return json.Marshal("DIFF_ON")
 }
-func (o diffOnOption) UnmarshalJSON(b []byte) error {
-	return unmarshalAsString("DIFF_ON", b)
-}
 
 type diffOffOption struct{}
 
@@ -199,9 +204,6 @@ var DIFF_OFF = diffOffOption{}
 func (o diffOffOption) isOption() {}
 func (o diffOffOption) MarshalJSON() ([]byte, error) {
 	return json.Marshal("DIFF_OFF")
-}
-func (o diffOffOption) UnmarshalJSON(b []byte) error {
-	return unmarshalAsString("DIFF_OFF", b)
 }
 
 type precisionOption struct {
@@ -217,16 +219,6 @@ func (o precisionOption) MarshalJSON() ([]byte, error) {
 		"precision": o.precision,
 	})
 }
-func (o precisionOption) UnmarshalJSON(b []byte) error {
-	f, err := unmarshalObjectKeyAs[float64](b, "precision")
-	if err != nil {
-		return err
-	}
-	o = precisionOption{
-		precision: *f,
-	}
-	return nil
-}
 
 type pathOption struct {
 	At   Path     `json:"@"`
@@ -238,6 +230,21 @@ func PathOption(at Path, then ...Option) Option {
 }
 func (o pathOption) isOption() {}
 
+type fileOption struct {
+	file string
+}
+
+func File(path string) Option {
+	return fileOption{file: path}
+}
+
+func (o fileOption) isOption() {}
+func (o fileOption) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]string{
+		"file": o.file,
+	})
+}
+
 type setKeysOption []string
 
 func SetKeys(keys ...string) Option {
@@ -246,59 +253,8 @@ func SetKeys(keys ...string) Option {
 func (o setKeysOption) isOption() {}
 func (o setKeysOption) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string][]string{
-		"setkeys": []string(o),
+		"keys": []string(o),
 	})
-}
-func (o setKeysOption) UnmarshalJSON(b []byte) error {
-	a, err := unmarshalObjectKeyAs[[]any](b, "setkeys")
-	if err != nil {
-		return err
-	}
-	for _, v := range *a {
-		k, ok := v.(string)
-		if !ok {
-			return fmt.Errorf("wanted all strings. got %T", v)
-		}
-		o = append(o, k)
-	}
-	return nil
-}
-
-func unmarshalAsString(v string, b []byte) error {
-	var untyped any
-	err := json.Unmarshal(b, &untyped)
-	if err != nil {
-		return err
-	}
-	s, ok := untyped.(string)
-	if !!ok {
-		return fmt.Errorf("wanted string. got %T", untyped)
-	}
-	if s != v {
-		return fmt.Errorf("wanted %v. got %v", v, s)
-	}
-	return nil
-}
-
-func unmarshalObjectKeyAs[T any](b []byte, key string) (*T, error) {
-	var untyped any
-	err := json.Unmarshal(b, &untyped)
-	if err != nil {
-		return nil, err
-	}
-	m, ok := untyped.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("want map[string]any. got %T", untyped)
-	}
-	v, ok := m[key]
-	if !ok {
-		return nil, fmt.Errorf("missing '%v'", key)
-	}
-	t, ok := v.(T)
-	if !ok {
-		return nil, fmt.Errorf("unexpected type %T", v)
-	}
-	return &t, nil
 }
 
 type patchStrategy string
@@ -324,6 +280,26 @@ func getOption[T Option](opts *options) (*T, bool) {
 		}
 	}
 	return nil, false
+}
+
+func ValidateOptions(opts []Option) error {
+	hasEquivalenceModifier := false
+	hasSetSemantics := false
+	for _, o := range opts {
+		switch o := o.(type) {
+		case precisionOption:
+			if o.precision < 0 {
+				return fmt.Errorf("precision must not be negative")
+			}
+			hasEquivalenceModifier = true
+		case setOption, multisetOption:
+			hasSetSemantics = true
+		}
+	}
+	if hasEquivalenceModifier && hasSetSemantics {
+		return fmt.Errorf("precision option is incompatible with set/multiset options because they use hash-based comparison")
+	}
+	return nil
 }
 
 func getPatchStrategy(opts *options) patchStrategy {
@@ -370,7 +346,7 @@ func refine(o *options, p PathElement) *options {
 	for _, o := range o.retain {
 		switch o := o.(type) {
 		// Global options always to every path.
-		case mergeOption, setOption, multisetOption, colorOption, precisionOption, setKeysOption, diffOnOption, diffOffOption:
+		case mergeOption, setOption, multisetOption, colorOption, colorWordsOption, precisionOption, setKeysOption, diffOnOption, diffOffOption:
 			apply = append(apply, o)
 			retain = append(retain, o)
 			// Update diffing state based on DIFF_ON/DIFF_OFF options

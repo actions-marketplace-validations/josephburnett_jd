@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,59 +13,63 @@ import (
 
 // Test case structure for JSON serialization
 type TestCase struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	Category    string            `json:"category"`
-	FileA       string            `json:"file_a,omitempty"`
-	FileB       string            `json:"file_b,omitempty"`
-	FileDiff    string            `json:"file_diff,omitempty"`
-	ContentA    string            `json:"content_a,omitempty"`
-	ContentB    string            `json:"content_b,omitempty"`
-	ExpectedDiff string           `json:"expected_diff,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	ExpectedExit int              `json:"expected_exit"`
-	ShouldError bool              `json:"should_error"`
-	ComplianceLevel string        `json:"compliance_level"` // "core", "extended", "format"
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	Category       string          `json:"category"`
+	FileA          string          `json:"file_a,omitempty"`
+	FileB          string          `json:"file_b,omitempty"`
+	FileDiff       string          `json:"file_diff,omitempty"`
+	ContentA       string          `json:"content_a,omitempty"`
+	ContentB       string          `json:"content_b,omitempty"`
+	Operation      string          `json:"operation,omitempty"`
+	Options        json.RawMessage `json:"options,omitempty"`
+	ExpectedOutput string          `json:"expected_output,omitempty"`
+	AcceptedLines  [][]string      `json:"accepted_lines,omitempty"`
+	ExpectError    bool            `json:"expect_error,omitempty"`
 }
 
 // Test results
 type TestResult struct {
-	TestCase    TestCase `json:"test_case"`
-	Passed      bool     `json:"passed"`
-	ActualExit  int      `json:"actual_exit"`
-	ActualDiff  string   `json:"actual_diff,omitempty"`
-	Error       string   `json:"error,omitempty"`
-	Duration    string   `json:"duration"`
+	TestCase   TestCase `json:"test_case"`
+	Passed     bool     `json:"passed"`
+	ActualExit int      `json:"actual_exit"`
+	ActualDiff string   `json:"actual_diff,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	Duration   string   `json:"duration"`
 }
 
-// Test runner configuration  
+// Test runner configuration
 type Config struct {
-	BinaryPath      string
-	TestDataDir     string
-	Verbose         bool
-	CoreOnly        bool
-	ExtendedOnly    bool
-	FormatOnly      bool
-	CategoryFilter  string
-	Timeout         time.Duration
-	FailFast        bool
+	BinaryPath     string
+	CasesDir       string
+	TestDataDir    string
+	Verbose        bool
+	CategoryFilter string
+	Timeout        time.Duration
+	FailFast       bool
+	OptsFlag       string
+	PatchFlag      string
+	ErrorExit      int
+	DiffExit       int
 }
 
 func main() {
 	var config Config
-	
+
 	flag.StringVar(&config.BinaryPath, "binary", "", "Path to jd binary to test (required)")
+	flag.StringVar(&config.CasesDir, "cases", "../cases", "Path to test cases directory")
 	flag.StringVar(&config.TestDataDir, "testdata", "./testdata", "Path to test data directory")
 	flag.BoolVar(&config.Verbose, "verbose", false, "Verbose output")
-	flag.BoolVar(&config.CoreOnly, "core-only", false, "Test core compliance only")
-	flag.BoolVar(&config.ExtendedOnly, "extended-only", false, "Test extended compliance only")  
-	flag.BoolVar(&config.FormatOnly, "format-only", false, "Test format compliance only")
 	flag.StringVar(&config.CategoryFilter, "category", "", "Filter by test category")
 	flag.DurationVar(&config.Timeout, "timeout", 30*time.Second, "Timeout per test case")
 	flag.BoolVar(&config.FailFast, "fail-fast", false, "Stop on first failure")
-	
+	flag.StringVar(&config.OptsFlag, "opts-flag", "-opts", "Flag for passing options to binary")
+	flag.StringVar(&config.PatchFlag, "patch-flag", "-p", "Flag for invoking patch mode")
+	flag.IntVar(&config.ErrorExit, "error-exit", 2, "Exit code meaning error")
+	flag.IntVar(&config.DiffExit, "diff-exit", 1, "Exit code meaning differences found")
+
 	flag.Parse()
-	
+
 	if config.BinaryPath == "" {
 		if len(flag.Args()) > 0 {
 			config.BinaryPath = flag.Args()[0]
@@ -76,44 +79,44 @@ func main() {
 			os.Exit(64) // EX_USAGE
 		}
 	}
-	
+
 	// Validate binary exists and is executable
 	if err := validateBinary(config.BinaryPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(66) // EX_NOINPUT
 	}
-	
+
 	// Load test cases
-	testCases, err := loadTestCases(config.TestDataDir)
+	testCases, err := loadTestCases(config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading test cases: %v\n", err)
 		os.Exit(65) // EX_DATAERR
 	}
-	
+
 	// Filter test cases
 	testCases = filterTestCases(testCases, config)
-	
+
 	if len(testCases) == 0 {
 		fmt.Println("No test cases match the specified criteria")
 		os.Exit(0)
 	}
-	
+
 	fmt.Printf("Running %d test cases against %s\n", len(testCases), config.BinaryPath)
 	fmt.Println()
-	
+
 	// Run tests
 	results := make([]TestResult, 0, len(testCases))
 	passed := 0
 	failed := 0
-	
+
 	for i, testCase := range testCases {
 		if config.Verbose {
 			fmt.Printf("[%d/%d] %s: %s\n", i+1, len(testCases), testCase.Category, testCase.Name)
 		}
-		
+
 		result := runTestCase(testCase, config)
 		results = append(results, result)
-		
+
 		if result.Passed {
 			passed++
 			if config.Verbose {
@@ -129,11 +132,11 @@ func main() {
 			}
 		}
 	}
-	
+
 	// Print summary
 	fmt.Println()
 	fmt.Printf("Results: %d passed, %d failed, %d total\n", passed, failed, len(results))
-	
+
 	if failed > 0 {
 		fmt.Println("\nFailures:")
 		for _, result := range results {
@@ -142,7 +145,7 @@ func main() {
 			}
 		}
 	}
-	
+
 	// Generate detailed report if requested
 	if config.Verbose {
 		reportFile := "test-results.json"
@@ -152,7 +155,7 @@ func main() {
 			fmt.Printf("Detailed report written to %s\n", reportFile)
 		}
 	}
-	
+
 	// Exit with appropriate code
 	if failed > 0 {
 		os.Exit(1) // Test failures
@@ -165,59 +168,56 @@ func validateBinary(path string) error {
 	if err != nil {
 		return fmt.Errorf("cannot access binary: %v", err)
 	}
-	
+
 	if info.IsDir() {
 		return fmt.Errorf("path is a directory, not a binary")
 	}
-	
+
 	// Check if executable (Unix-style check)
 	if info.Mode()&0111 == 0 {
 		return fmt.Errorf("binary is not executable")
 	}
-	
+
 	return nil
 }
 
-func loadTestCases(testDataDir string) ([]TestCase, error) {
+func loadTestCases(config Config) ([]TestCase, error) {
 	testCases := make([]TestCase, 0)
-	
-	// Load from cases directory
-	casesDir := filepath.Join(testDataDir, "../cases")
-	
-	err := filepath.Walk(casesDir, func(path string, info os.FileInfo, err error) error {
+
+	err := filepath.Walk(config.CasesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		
+
 		if !strings.HasSuffix(path, ".json") {
 			return nil
 		}
-		
-		data, err := ioutil.ReadFile(path)
+
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		
+
 		var cases []TestCase
 		if err := json.Unmarshal(data, &cases); err != nil {
 			return fmt.Errorf("error parsing %s: %v", path, err)
 		}
-		
+
 		testCases = append(testCases, cases...)
 		return nil
 	})
-	
+
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Validate and resolve file paths
 	for i := range testCases {
-		if err := resolveTestCase(&testCases[i], testDataDir); err != nil {
+		if err := resolveTestCase(&testCases[i], config.TestDataDir); err != nil {
 			return nil, fmt.Errorf("error in test case %s: %v", testCases[i].Name, err)
 		}
 	}
-	
+
 	return testCases, nil
 }
 
@@ -232,39 +232,37 @@ func resolveTestCase(testCase *TestCase, testDataDir string) error {
 	if testCase.FileDiff != "" {
 		testCase.FileDiff = filepath.Join(testDataDir, testCase.FileDiff)
 	}
-	
-	// Set default compliance level
-	if testCase.ComplianceLevel == "" {
-		testCase.ComplianceLevel = "core"
-	}
-	
+
 	return nil
 }
 
 func filterTestCases(testCases []TestCase, config Config) []TestCase {
 	filtered := make([]TestCase, 0)
-	
+
 	for _, testCase := range testCases {
-		// Filter by compliance level
-		if config.CoreOnly && testCase.ComplianceLevel != "core" {
-			continue
-		}
-		if config.ExtendedOnly && testCase.ComplianceLevel != "extended" {
-			continue  
-		}
-		if config.FormatOnly && testCase.ComplianceLevel != "format" {
-			continue
-		}
-		
 		// Filter by category
 		if config.CategoryFilter != "" && testCase.Category != config.CategoryFilter {
 			continue
 		}
-		
+
 		filtered = append(filtered, testCase)
 	}
-	
+
 	return filtered
+}
+
+func expectedExitCode(tc TestCase, config Config) int {
+	if tc.ExpectError {
+		return config.ErrorExit
+	}
+	if tc.Operation == "patch" {
+		return 0
+	}
+	// diff operation (default)
+	if tc.ExpectedOutput != "" || len(tc.AcceptedLines) > 0 {
+		return config.DiffExit
+	}
+	return 0
 }
 
 func runTestCase(testCase TestCase, config Config) TestResult {
@@ -273,11 +271,20 @@ func runTestCase(testCase TestCase, config Config) TestResult {
 		TestCase: testCase,
 		Passed:   false,
 	}
-	
+
 	// Build command arguments
 	args := make([]string, 0)
-	args = append(args, testCase.Args...)
-	
+
+	// Add options if present
+	if testCase.Options != nil {
+		args = append(args, fmt.Sprintf("%s=%s", config.OptsFlag, string(testCase.Options)))
+	}
+
+	// Add patch flag if operation is patch
+	if testCase.Operation == "patch" {
+		args = append(args, config.PatchFlag)
+	}
+
 	// Add input files or content
 	var inputFiles []string
 	if testCase.ContentA != "" || (testCase.ContentA == "" && testCase.FileA == "") {
@@ -293,7 +300,7 @@ func runTestCase(testCase TestCase, config Config) TestResult {
 	} else if testCase.FileA != "" {
 		inputFiles = append(inputFiles, testCase.FileA)
 	}
-	
+
 	if testCase.ContentB != "" || (testCase.ContentB == "" && testCase.FileB == "") {
 		// Create temporary file for content B (including empty content)
 		fileB, err := createTempFile(testCase.ContentB)
@@ -307,15 +314,15 @@ func runTestCase(testCase TestCase, config Config) TestResult {
 	} else if testCase.FileB != "" {
 		inputFiles = append(inputFiles, testCase.FileB)
 	}
-	
+
 	args = append(args, inputFiles...)
-	
+
 	// Execute command with timeout
 	cmd := exec.Command(config.BinaryPath, args...)
-	
+
 	output, err := executeWithTimeout(cmd, config.Timeout)
 	result.Duration = time.Since(start).String()
-	
+
 	// Handle execution results
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
@@ -327,48 +334,136 @@ func runTestCase(testCase TestCase, config Config) TestResult {
 	} else {
 		result.ActualExit = 0
 	}
-	
+
 	result.ActualDiff = string(output)
-	
+
 	// Check exit code
-	if result.ActualExit != testCase.ExpectedExit {
-		result.Error = fmt.Sprintf("exit code mismatch: expected %d, got %d", 
-			testCase.ExpectedExit, result.ActualExit)
+	expectedExit := expectedExitCode(testCase, config)
+	if result.ActualExit != expectedExit {
+		result.Error = fmt.Sprintf("exit code mismatch: expected %d, got %d",
+			expectedExit, result.ActualExit)
 		return result
 	}
-	
-	// Check for expected errors
-	if testCase.ShouldError && result.ActualExit == 0 {
-		result.Error = "expected error but command succeeded"
+
+	// For error cases, exit code match is sufficient
+	if testCase.ExpectError {
+		result.Passed = true
 		return result
 	}
-	
+
 	// Compare output if provided
-	if testCase.ExpectedDiff != "" {
-		if !compareOutputs(result.ActualDiff, testCase.ExpectedDiff) {
-			result.Error = fmt.Sprintf("output mismatch:\nExpected:\n%s\nActual:\n%s", 
-				testCase.ExpectedDiff, result.ActualDiff)
+	if len(testCase.AcceptedLines) > 0 {
+		if err := compareAcceptedLines(result.ActualDiff, testCase.AcceptedLines); err != nil {
+			result.Error = fmt.Sprintf("output mismatch: %v\nActual:\n%s",
+				err, result.ActualDiff)
+			return result
+		}
+	} else if testCase.ExpectedOutput != "" {
+		if !compareOutputs(result.ActualDiff, testCase.ExpectedOutput) {
+			result.Error = fmt.Sprintf("output mismatch:\nExpected:\n%s\nActual:\n%s",
+				testCase.ExpectedOutput, result.ActualDiff)
 			return result
 		}
 	}
-	
+
 	result.Passed = true
+
+	// Round-trip verification for diff tests
+	if result.Passed {
+		if err := roundTrip(testCase, result.ActualDiff, config); err != nil {
+			result.Passed = false
+			result.Error = fmt.Sprintf("round-trip failure: %v", err)
+		}
+	}
+
 	return result
 }
 
+// roundTrip verifies that patching content_a with the diff output produces content_b.
+// It is skipped for error tests and patch tests.
+func roundTrip(testCase TestCase, diffOutput string, config Config) error {
+	// Skip cases where round-trip doesn't apply
+	if testCase.ExpectError {
+		return nil
+	}
+	if testCase.Operation == "patch" {
+		return nil
+	}
+	if diffOutput == "" || strings.TrimSpace(diffOutput) == "" {
+		return nil
+	}
+
+	// Step 1: Write diff output to a temp file
+	diffFile, err := createTempFile(diffOutput)
+	if err != nil {
+		return fmt.Errorf("creating diff temp file: %v", err)
+	}
+	defer os.Remove(diffFile)
+
+	// Write content_a to a temp file
+	contentAFile, err := createTempFile(testCase.ContentA)
+	if err != nil {
+		return fmt.Errorf("creating content_a temp file: %v", err)
+	}
+	defer os.Remove(contentAFile)
+
+	// Run: binary -p <diff_file> <content_a_file> → patched result
+	patchArgs := []string{config.PatchFlag, diffFile, contentAFile}
+	patchCmd := exec.Command(config.BinaryPath, patchArgs...)
+	patchOutput, err := executeWithTimeout(patchCmd, config.Timeout)
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("patch exited %d: %s", exitError.ExitCode(), string(exitError.Stderr))
+		}
+		return fmt.Errorf("patch execution: %v", err)
+	}
+
+	// Step 2: Write patched result to a temp file
+	patchedFile, err := createTempFile(string(patchOutput))
+	if err != nil {
+		return fmt.Errorf("creating patched temp file: %v", err)
+	}
+	defer os.Remove(patchedFile)
+
+	// Write content_b to a temp file
+	contentBFile, err := createTempFile(testCase.ContentB)
+	if err != nil {
+		return fmt.Errorf("creating content_b temp file: %v", err)
+	}
+	defer os.Remove(contentBFile)
+
+	// Run: binary -opts=<options> <patched_file> <content_b_file> → expect exit 0
+	verifyArgs := []string{}
+	if testCase.Options != nil {
+		verifyArgs = append(verifyArgs, fmt.Sprintf("%s=%s", config.OptsFlag, string(testCase.Options)))
+	}
+	verifyArgs = append(verifyArgs, patchedFile, contentBFile)
+	verifyCmd := exec.Command(config.BinaryPath, verifyArgs...)
+	verifyOutput, err := executeWithTimeout(verifyCmd, config.Timeout)
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("patched result differs from content_b (exit %d):\n%s",
+				exitError.ExitCode(), string(verifyOutput))
+		}
+		return fmt.Errorf("verify execution: %v", err)
+	}
+
+	return nil
+}
+
 func createTempFile(content string) (string, error) {
-	tmpFile, err := ioutil.TempFile("", "jd-test-*.json")
+	tmpFile, err := os.CreateTemp("", "jd-test-*.json")
 	if err != nil {
 		return "", err
 	}
-	
+
 	_, err = tmpFile.WriteString(content)
 	if err != nil {
 		tmpFile.Close()
 		os.Remove(tmpFile.Name())
 		return "", err
 	}
-	
+
 	tmpFile.Close()
 	return tmpFile.Name(), nil
 }
@@ -377,12 +472,12 @@ func executeWithTimeout(cmd *exec.Cmd, timeout time.Duration) ([]byte, error) {
 	done := make(chan error, 1)
 	var output []byte
 	var err error
-	
+
 	go func() {
 		output, err = cmd.Output()
 		done <- err
 	}()
-	
+
 	select {
 	case err := <-done:
 		return output, err
@@ -394,15 +489,90 @@ func executeWithTimeout(cmd *exec.Cmd, timeout time.Duration) ([]byte, error) {
 	}
 }
 
+func compareAcceptedLines(actual string, acceptedLines [][]string) error {
+	// Normalize and filter unknown metadata
+	actual = strings.ReplaceAll(actual, "\r\n", "\n")
+	actual = strings.TrimSpace(actual)
+
+	// Collect accepted metadata lines
+	acceptedMeta := make(map[string]bool)
+	for _, group := range acceptedLines {
+		for _, line := range group {
+			if strings.HasPrefix(line, "^ ") {
+				acceptedMeta[line] = true
+			}
+		}
+	}
+
+	// Filter unknown metadata from actual output
+	var actualLines []string
+	for _, line := range strings.Split(actual, "\n") {
+		if strings.HasPrefix(line, "^ ") && !acceptedMeta[line] {
+			continue
+		}
+		actualLines = append(actualLines, line)
+	}
+
+	// Walk through accepted groups, consuming actual lines
+	i := 0
+	for _, group := range acceptedLines {
+		if i+len(group) > len(actualLines) {
+			return fmt.Errorf("not enough output lines: expected group %v at line %d", group, i)
+		}
+		// Collect the next N actual lines and check they match the group as a set
+		chunk := make(map[string]int)
+		for _, line := range actualLines[i : i+len(group)] {
+			chunk[line]++
+		}
+		expected := make(map[string]int)
+		for _, line := range group {
+			expected[line]++
+		}
+		for line, count := range expected {
+			if chunk[line] != count {
+				return fmt.Errorf("at line %d: expected %d of %q, got %d", i, count, line, chunk[line])
+			}
+		}
+		for line, count := range chunk {
+			if expected[line] != count {
+				return fmt.Errorf("at line %d: unexpected line %q (got %d)", i, line, count)
+			}
+		}
+		i += len(group)
+	}
+	if i != len(actualLines) {
+		return fmt.Errorf("extra output lines after line %d", i)
+	}
+	return nil
+}
+
 func compareOutputs(actual, expected string) bool {
 	// Normalize line endings
 	actual = strings.ReplaceAll(actual, "\r\n", "\n")
 	expected = strings.ReplaceAll(expected, "\r\n", "\n")
-	
+
 	// Trim trailing whitespace
 	actual = strings.TrimSpace(actual)
 	expected = strings.TrimSpace(expected)
-	
+
+	// Collect expected metadata lines so we know which ones are required
+	expectedMeta := make(map[string]bool)
+	for _, line := range strings.Split(expected, "\n") {
+		if strings.HasPrefix(line, "^ ") {
+			expectedMeta[line] = true
+		}
+	}
+
+	// Filter actual output: drop metadata lines not present in expected
+	var filteredLines []string
+	for _, line := range strings.Split(actual, "\n") {
+		if strings.HasPrefix(line, "^ ") && !expectedMeta[line] {
+			continue
+		}
+		filteredLines = append(filteredLines, line)
+	}
+	actual = strings.Join(filteredLines, "\n")
+
 	return actual == expected
 }
 
@@ -411,6 +581,6 @@ func generateReport(results []TestResult, filename string) error {
 	if err != nil {
 		return err
 	}
-	
-	return ioutil.WriteFile(filename, data, 0644)
+
+	return os.WriteFile(filename, data, 0644)
 }

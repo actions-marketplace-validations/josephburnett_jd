@@ -13,8 +13,26 @@ This directory contains the formal specification for the structural JSON diff fo
 ### Reference Materials
 - **[examples.md](examples.md)** - Complete examples covering all features and edge cases
 
-### Test Suite
-- **[test/](test/)** - Blackbox compliance test suite for implementation validation
+### Test Data and Runner
+- **[cases/](cases/)** - Implementation-agnostic test data (JSON files describing inputs and expected outputs)
+- **[test/](test/)** - Reference test runner that executes test data against a CLI binary
+
+## Structure
+
+```
+spec/
+├── README.md
+├── jd-format.md, grammar.md, semantics.md, errors.md, examples.md
+├── cases/               # Test data (part of the spec)
+│   ├── README.md
+│   ├── core.json
+│   ├── options.json
+│   └── errors.json
+└── test/                # Reference test runner (Go)
+    ├── main.go
+    ├── go.mod
+    └── README.md
+```
 
 ## Implementation Guide
 
@@ -24,46 +42,31 @@ To implement the structural format:
 2. **Study [grammar.md](grammar.md)** - Implement the parser using the ABNF grammar
 3. **Review [semantics.md](semantics.md)** - Understand operational semantics
 4. **Handle [errors.md](errors.md)** - Implement proper error handling
-5. **Test with [test/](test/)** - Validate your implementation
-
-## Compliance Levels
-
-### Core Compliance
-- Basic diff generation and patch application
-- Simple path navigation (object keys, array indices)
-- Context preservation in array diffs
-
-### Extended Compliance  
-- Options support (SET, MULTISET, precision, setkeys)
-- PathOptions for targeted comparisons
-- Options header rendering
-
-### Format Compliance
-- Translation between jd, RFC6902 (JSON Patch), and RFC7386 (JSON Merge Patch)
-- Preservation of semantic equivalence across formats
+5. **Validate with [cases/](cases/)** - Test your implementation against the test data
 
 ## Testing Your Implementation
 
-The test suite in `test/` provides complete validation:
+The test data in `cases/` defines expected behavior independent of any CLI, library, or language. See [cases/README.md](cases/README.md) for the verification procedure — it describes how to use the test cases to validate both diff and patch operations.
+
+For CLI-based implementations, the reference test runner in `test/` automates this process:
 
 ```bash
 cd test
 go build -o test-runner .
-./test-runner /path/to/your/structural/binary
+./test-runner /path/to/your/binary
 ```
 
-Exit code 0 indicates full compliance. Non-zero indicates failures with detailed reporting.
+See [test/README.md](test/README.md) for runner flags and how to adapt it to different CLI interfaces.
 
 ## About the Structural Format
 
 The structural format is a human-readable diff format for JSON and YAML data with these features:
 
 - **Human-readable**: Unified diff-style output
-- **Context-aware**: Shows surrounding elements for change location clarity  
+- **Context-aware**: Shows surrounding elements for change location clarity
 - **Set semantics**: Treats arrays as sets or multisets when order doesn't matter
 - **Configurable**: Supports numeric precision tolerance for floating-point comparisons
 - **Flexible**: PathOptions enable fine-grained comparison control
-- **Interoperable**: Converts to/from standard patch formats
 
 ## Version
 

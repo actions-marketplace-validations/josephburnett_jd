@@ -1,5 +1,5 @@
 # Enforce strict toolchain usage - matches toolchain directive in go.mod
-export GOTOOLCHAIN=go1.23.12
+export GOTOOLCHAIN=go1.24.13
 
 # Toolchain validation target
 .PHONY : validate-toolchain
@@ -18,6 +18,15 @@ validate-toolchain :
 		echo "  Makefile GOTOOLCHAIN: $(GOTOOLCHAIN)"; \
 		echo "  go.mod toolchain: $$ROOT_TOOLCHAIN"; \
 		echo "  Please update GOTOOLCHAIN in Makefile to match go.mod"; \
+		exit 1; \
+	fi; \
+	GOMOD_VERSION=$$(grep '^go ' go.mod | awk '{print $$2}' | cut -d. -f1,2); \
+	DOCKER_VERSION=$$(grep '^FROM golang:' Dockerfile | head -1 | sed 's/FROM golang:\([0-9.]*\).*/\1/'); \
+	if [ "$$GOMOD_VERSION" != "$$DOCKER_VERSION" ]; then \
+		echo "Error: Dockerfile Go version does not match go.mod:"; \
+		echo "  Dockerfile: golang:$$DOCKER_VERSION"; \
+		echo "  go.mod go directive: $$GOMOD_VERSION"; \
+		echo "  Please update FROM golang: in Dockerfile to match go.mod"; \
 		exit 1; \
 	fi; \
 	echo "✓ Toolchain validation passed: $$ROOT_TOOLCHAIN"
@@ -42,9 +51,54 @@ fuzz : validate-toolchain
 fuzz-indef: validate-toolchain
 	cd v2 ; go test . -fuzz=FuzzJd
 
+.PHONY : cover
+cover : validate-toolchain
+	cd v2 ; go test -coverprofile=coverage.out . ./jd
+	cd v2 ; go run internal/coverfilter/main.go coverage.out > coverage_filtered.out
+	cd v2 ; go tool cover -func=coverage_filtered.out | tail -1
+	@echo "For HTML report: cd v2 && go tool cover -html=coverage.out"
+	@echo "Checking non-trivial code for 100% coverage..."
+	@cd v2 ; grep -v '^\s*#' cover_exclude.txt | grep -v '^\s*$$' > coverage_exclude_patterns.tmp ; \
+	lines=$$(go tool cover -func=coverage_filtered.out \
+		| grep -v '^total:' \
+		| grep -v '100.0%' \
+		| grep -vf coverage_exclude_patterns.tmp) ; \
+	rm -f coverage_exclude_patterns.tmp ; \
+	if [ -n "$$lines" ]; then \
+		echo "$$lines" ; \
+		echo "FAIL: non-trivial functions below 100% coverage" ; \
+		exit 1 ; \
+	else \
+		echo "OK: all non-trivial functions at 100% coverage" ; \
+	fi
+
+.PHONY : spec-test
+spec-test : validate-toolchain
+	cd v2 ; go build -o ../spec/test/jd ./jd
+	cd spec/test ; go build -o test-runner .
+	cd spec/test ; ./test-runner -verbose -binary ./jd
+	rm -f spec/test/jd spec/test/test-runner
+
 .PHONY : go-fmt
 go-fmt :
+	go fmt ./...
 	cd v2 ; go fmt ./...
+
+.PHONY : check-fmt
+check-fmt : validate-toolchain
+	@unformatted=$$(gofmt -l . v2); \
+	if [ -n "$$unformatted" ]; then \
+		echo "Error: unformatted Go files:"; \
+		echo "$$unformatted"; \
+		echo "Run 'make go-fmt' to fix."; \
+		exit 1; \
+	fi; \
+	echo "✓ All Go files formatted"
+
+.PHONY : vet
+vet : validate-toolchain
+	go vet . ./lib
+	cd v2 ; go vet $$(go list ./... 2>/dev/null | grep -v internal/web/ui)
 
 .PHONY : pack-web
 pack-web : build-web validate-toolchain
@@ -52,7 +106,7 @@ pack-web : build-web validate-toolchain
 
 .PHONY : build-web
 build-web : validate-toolchain
-	cd v2 ; curl -fsSL https://raw.githubusercontent.com/golang/go/go1.23.12/misc/wasm/wasm_exec.js -o internal/web/assets/wasm_exec.js
+	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" v2/internal/web/assets/wasm_exec.js
 	cd v2 ; GOOS=js GOARCH=wasm go build -o internal/web/assets/jd.wasm ./internal/web/ui
 
 .PHONY : serve
@@ -74,6 +128,7 @@ build-all : test pack-web validate-toolchain
 	cd v2/jd ; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags include_web -o ../../release/jd-arm64-linux main.go
 	cd v2/jd ; GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -tags include_web -o ../../release/jd-arm64-darwin main.go
 	cd v2/jd ; GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -tags include_web -o ../../release/jd-arm64-windows.exe main.go
+	cd v2/jd ; GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build -tags include_web -o ../../release/jd-riscv64-linux main.go
 
 .PHONY : build-docker
 build-docker : check-env test

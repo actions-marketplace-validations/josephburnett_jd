@@ -27,3 +27,8 @@ v2/internal/web/assets/wasm_exec.js
 v2/internal/web/assets/jd.wasm
 v2/internal/web/serve/files.go
 release/
+coverage.out
+coverage_filtered.out
+spec/test/jd
+spec/test/test-runner
+spec/test/test-results.json

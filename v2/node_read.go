@@ -2,15 +2,15 @@ package jd
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"os"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ReadJsonFile reads a file as JSON and constructs a JsonNode.
 func ReadJsonFile(filename string) (JsonNode, error) {
-	bytes, err := ioutil.ReadFile(filename)
+	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
@@ -19,7 +19,7 @@ func ReadJsonFile(filename string) (JsonNode, error) {
 
 // ReadYamlFile reads a file as YAML and constructs a JsonNode.
 func ReadYamlFile(filename string) (JsonNode, error) {
-	bytes, err := ioutil.ReadFile(filename)
+	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}

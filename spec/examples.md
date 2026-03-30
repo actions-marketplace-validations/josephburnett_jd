@@ -102,9 +102,7 @@ This document provides complete examples of the structural diff format, demonstr
   1
 - 2
   3
-  4
-@ [4]
-  3
+@ [3]
   4
 - 5
 + 6
@@ -133,14 +131,13 @@ This document provides complete examples of the structural diff format, demonstr
 + "orange"
 + "magenta"
   "yellow"
-  "purple"
 ```
 
 ## Options Examples
 
 ### SET Option
 
-**Command:** `jd -set a.json b.json`
+**Options:** `["SET"]`
 
 **Input A:**
 ```json
@@ -162,7 +159,7 @@ This document provides complete examples of the structural diff format, demonstr
 
 ### MULTISET Option
 
-**Command:** `jd -mset a.json b.json`
+**Options:** `["MULTISET"]`
 
 **Input A:**
 ```json
@@ -186,7 +183,7 @@ This document provides complete examples of the structural diff format, demonstr
 
 ### Precision Option
 
-**Command:** `jd -precision=0.01 a.json b.json`
+**Options:** `[{"precision": 0.01}]`
 
 **Input A:**
 ```json
@@ -206,9 +203,9 @@ This document provides complete examples of the structural diff format, demonstr
 + 65.489
 ```
 
-### SetKeys Option
+### Keys Option
 
-**Command:** `jd -setkeys=id a.json b.json`
+**Options:** `[{"keys": ["id"]}]`
 
 **Input A:**
 ```json
@@ -232,7 +229,7 @@ This document provides complete examples of the structural diff format, demonstr
 
 **Diff Output:**
 ```diff
-^ {"setkeys":["id"]}
+^ {"keys":["id"]}
 @ ["users",{"id":1},"status"]
 - "active"
 + "inactive"
@@ -245,7 +242,7 @@ This document provides complete examples of the structural diff format, demonstr
 
 ### Targeted SET Operation
 
-**Command:** `jd -opts='[{"@":["tags"],"^":["SET"]}]' a.json b.json`
+**Options:** `[{"@":["tags"],"^":["SET"]}]`
 
 **Input A:**
 ```json
@@ -258,7 +255,7 @@ This document provides complete examples of the structural diff format, demonstr
 **Input B:**
 ```json
 {
-  "tags": ["green", "red", "blue"], 
+  "tags": ["green", "red", "blue"],
   "items": [3, 2, 1]
 }
 ```
@@ -279,7 +276,7 @@ This document provides complete examples of the structural diff format, demonstr
 
 ### Multiple PathOptions
 
-**Command:** `jd -opts='[{"@":["coords"],"^":[{"precision":0.1}]},{"@":["labels"],"^":["SET"]}]' a.json b.json`
+**Options:** `[{"@":["coords"],"^":[{"precision":0.1}]},{"@":["labels"],"^":["SET"]}]`
 
 **Input A:**
 ```json
@@ -316,7 +313,7 @@ This document provides complete examples of the structural diff format, demonstr
 
 ### DIFF_OFF Example
 
-**Command:** `jd -opts='[{"@":["metadata"],"^":["DIFF_OFF"]}]' a.json b.json`
+**Options:** `[{"@":["metadata"],"^":["DIFF_OFF"]}]`
 
 **Input A:**
 ```json
@@ -350,7 +347,7 @@ This document provides complete examples of the structural diff format, demonstr
 
 ### Allow-list with DIFF_OFF/DIFF_ON
 
-**Command:** `jd -opts='[{"@":[],"^":["DIFF_OFF"]},{"@":["userdata"],"^":["DIFF_ON"]}]' a.json b.json`
+**Options:** `[{"@":[],"^":["DIFF_OFF"]},{"@":["userdata"],"^":["DIFF_ON"]}]`
 
 **Input A:**
 ```json
@@ -403,11 +400,11 @@ This document provides complete examples of the structural diff format, demonstr
 }
 ```
 
-**Command:** `jd -setkeys=id a.json b.json`
+**Options:** `[{"keys": ["id"]}]`
 
 **Diff Output:**
 ```diff
-^ {"setkeys":["id"]}
+^ {"keys":["id"]}
 @ ["items",{"id":"apple"},"color"]
 - "red"
 + "green"
@@ -440,7 +437,7 @@ This document provides complete examples of the structural diff format, demonstr
 }
 ```
 
-**Command:** `jd -opts='[{"@":["events"],"^":["MULTISET"]}]' a.json b.json`
+**Options:** `[{"@":["events"],"^":["MULTISET"]}]`
 
 **Diff Output:**
 ```diff
@@ -448,6 +445,75 @@ This document provides complete examples of the structural diff format, demonstr
 @ ["events",[]]
 - {"count":5,"type":"click"}
 + {"count":1,"type":"scroll"}
+```
+
+## Patch Application Examples
+
+### Basic Object Patch
+
+Apply a diff to change a value in an object.
+
+**Input:**
+```json
+{"name": "Alice", "age": 25}
+```
+
+**Diff:**
+```diff
+@ ["name"]
+- "Alice"
++ "Bob"
+```
+
+**Patched Output:**
+```json
+{"age":25,"name":"Bob"}
+```
+
+### Array Patch with Context
+
+Apply a diff to an array using context for validation.
+
+**Input:**
+```json
+{"items": ["apple", "banana", "cherry"]}
+```
+
+**Diff:**
+```diff
+@ ["items",1]
+  "apple"
+- "banana"
++ "blueberry"
+  "cherry"
+]
+```
+
+**Patched Output:**
+```json
+{"items":["apple","blueberry","cherry"]}
+```
+
+### Patch with SET Option
+
+Apply a diff that was generated with SET semantics.
+
+**Input:**
+```json
+{"tags": ["urgent", "bug", "frontend"]}
+```
+
+**Diff:**
+```diff
+^ "SET"
+@ ["tags",{}]
+- "bug"
++ "enhancement"
+```
+
+**Patched Output:**
+```json
+{"tags":["frontend","urgent","enhancement"]}
 ```
 
 ## Type Conversion Examples
@@ -548,55 +614,6 @@ This document provides complete examples of the structural diff format, demonstr
 + "C:\\Users\\Bob\\Documents"
 ```
 
-## Format Translation Examples
-
-### Structural to JSON Patch
-
-**Structural Input:**
-```diff
-@ ["name"]
-- "Alice"
-+ "Bob"
-@ ["age"]
-+ 30
-```
-
-**Command:** `jd -t=structural2patch input.structural`
-
-**JSON Patch Output:**
-```json
-[
-  {"op": "test", "path": "/name", "value": "Alice"},
-  {"op": "remove", "path": "/name", "value": "Alice"},
-  {"op": "add", "path": "/name", "value": "Bob"},
-  {"op": "add", "path": "/age", "value": 30}
-]
-```
-
-### Structural to JSON Merge Patch
-
-**Structural Input:**
-```diff
-^ "MERGE"
-@ ["name"]
-+ "Bob"
-@ ["age"]
-+ 30
-@ ["old_field"]
-+
-```
-
-**Command:** `jd -t=structural2merge input.structural`
-
-**JSON Merge Patch Output:**
-```json
-{
-  "name": "Bob",
-  "age": 30,
-  "old_field": null
-}
-```
-
 ## Complex Real-World Examples
 
 ### Configuration File Update
@@ -639,7 +656,7 @@ This document provides complete examples of the structural diff format, demonstr
 }
 ```
 
-**Command:** `jd -opts='[{"@":["features","feature_flags"],"^":["SET"]}]' a.json b.json`
+**Options:** `[{"@":["features","feature_flags"],"^":["SET"]}]`
 
 **Diff Output:**
 ```diff
@@ -712,12 +729,12 @@ This document provides complete examples of the structural diff format, demonstr
 }
 ```
 
-**Command:** `jd -opts='[{"@":["metadata"],"^":["DIFF_OFF"]},{"@":["data","users"],"^":[{"setkeys":["id"]}]}]' a.json b.json`
+**Options:** `[{"@":["metadata"],"^":["DIFF_OFF"]},{"@":["data","users"],"^":[{"keys":["id"]}]}]`
 
 **Diff Output:**
 ```diff
 ^ {"@":["metadata"],"^":["DIFF_OFF"]}
-^ {"@":["data","users"],"^":[{"setkeys":["id"]}]}
+^ {"@":["data","users"],"^":[{"keys":["id"]}]}
 @ ["data","total"]
 - 2
 + 3

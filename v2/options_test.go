@@ -7,6 +7,143 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestReadOptionsStringErrors(t *testing.T) {
+	// Invalid JSON
+	_, err := ReadOptionsString("not json")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+	// Not an array
+	_, err = ReadOptionsString(`"string"`)
+	if err == nil {
+		t.Fatal("expected error for non-array")
+	}
+	// Unknown option in array
+	_, err = ReadOptionsString(`["UNKNOWN"]`)
+	if err == nil {
+		t.Fatal("expected error for unknown option")
+	}
+}
+
+func TestNewOptionEdgeCases(t *testing.T) {
+	// Unrecognized string
+	_, err := NewOption("UNKNOWN")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// precision with wrong type
+	_, err = NewOption(map[string]any{"precision": "not a number"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// keys with wrong type
+	_, err = NewOption(map[string]any{"keys": "not an array"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// keys with non-string element
+	_, err = NewOption(map[string]any{"keys": []any{42}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// empty keys
+	_, err = NewOption(map[string]any{"keys": []any{}})
+	if err == nil {
+		t.Fatal("expected error for empty keys")
+	}
+	// setkeys backward compat
+	opt, err := NewOption(map[string]any{"setkeys": []any{"id"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := opt.(setKeysOption); !ok {
+		t.Errorf("expected setKeysOption, got %T", opt)
+	}
+	// Merge: true
+	opt, err = NewOption(map[string]any{"Merge": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := opt.(mergeOption); !ok {
+		t.Errorf("expected mergeOption, got %T", opt)
+	}
+	// Merge: false
+	_, err = NewOption(map[string]any{"Merge": false})
+	if err == nil {
+		t.Fatal("expected error for Merge:false")
+	}
+	// Merge: wrong type
+	_, err = NewOption(map[string]any{"Merge": "yes"})
+	if err == nil {
+		t.Fatal("expected error for Merge with wrong type")
+	}
+	// Unknown single-key object
+	_, err = NewOption(map[string]any{"unknown": 1})
+	if err == nil {
+		t.Fatal("expected error for unknown key")
+	}
+	// 2-key object with bad ^ type
+	_, err = NewOption(map[string]any{"@": []any{"a"}, "^": "not array"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// 2-key object with bad option in ^
+	_, err = NewOption(map[string]any{"@": []any{"a"}, "^": []any{"UNKNOWN"}})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// 2-key object with unknown key
+	_, err = NewOption(map[string]any{"@": []any{"a"}, "x": "y"})
+	if err == nil {
+		t.Fatal("expected error for unknown key in 2-key object")
+	}
+	// 3-key object
+	_, err = NewOption(map[string]any{"a": 1, "b": 2, "c": 3})
+	if err == nil {
+		t.Fatal("expected error for 3-key object")
+	}
+	// Unsupported base type
+	_, err = NewOption(42.0)
+	if err == nil {
+		t.Fatal("expected error for float64 type")
+	}
+	// Valid 2-key PathOption
+	opt, err = NewOption(map[string]any{"@": []any{"users"}, "^": []any{"SET"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := opt.(pathOption); !ok {
+		t.Errorf("expected pathOption, got %T", opt)
+	}
+}
+
+func TestRefineDiffOnOff(t *testing.T) {
+	// Global DIFF_OFF
+	opts := newOptions([]Option{DIFF_OFF})
+	refined := refine(opts, PathKey("anything"))
+	if refined.diffingOn {
+		t.Error("DIFF_OFF should set diffingOn to false")
+	}
+	// Global DIFF_ON
+	opts = newOptions([]Option{DIFF_OFF, DIFF_ON})
+	refined = refine(opts, PathKey("anything"))
+	if !refined.diffingOn {
+		t.Error("DIFF_ON should set diffingOn back to true")
+	}
+	// PathOption with DIFF_OFF in Then
+	opts = newOptions([]Option{PathOption(Path{PathKey("a")}, DIFF_OFF)})
+	refined = refine(opts, PathKey("a"))
+	if refined.diffingOn {
+		t.Error("PathOption DIFF_OFF should set diffingOn to false")
+	}
+	// PathOption with DIFF_ON in Then
+	opts = newOptions([]Option{DIFF_OFF, PathOption(Path{PathKey("a")}, DIFF_ON)})
+	refined = refine(opts, PathKey("a"))
+	if !refined.diffingOn {
+		t.Error("PathOption DIFF_ON should set diffingOn back to true")
+	}
+}
+
 // strPtr returns a pointer to a string literal
 func strPtr(s string) *string {
 	return &s
@@ -32,7 +169,7 @@ func TestOptionJSON(t *testing.T) {
 		json:   `[{"precision":1.01}]`,
 		option: Precision(1.01),
 	}, {
-		json:   `[{"setkeys":["foo","bar"]}]`,
+		json:   `[{"keys":["foo","bar"]}]`,
 		option: SetKeys("foo", "bar"),
 	}, {
 		json:   `[{"@":["foo"],"^":["SET"]}]`,
@@ -41,11 +178,17 @@ func TestOptionJSON(t *testing.T) {
 		json:   `[{"@":["foo"],"^":[{"@":["bar"],"^":["SET"]}]}]`,
 		option: PathOption(Path{PathKey("foo")}, PathOption(Path{PathKey("bar")}, SET)),
 	}, {
+		json:   `["COLOR_WORDS"]`,
+		option: COLOR_WORDS,
+	}, {
 		json:   `["DIFF_ON"]`,
 		option: DIFF_ON,
 	}, {
 		json:   `["DIFF_OFF"]`,
 		option: DIFF_OFF,
+	}, {
+		json:   `[{"file":"example.json"}]`,
+		option: File("example.json"),
 	}}
 	for _, c := range cases {
 		t.Run(c.json, func(t *testing.T) {
@@ -164,13 +307,13 @@ func TestPathOption(t *testing.T) {
 		b:    `{"measurements":[10.0, 20.0, 30.44]}`, // index 2 within precision
 	}, {
 		// SetKeys option tests - for objects as sets with specific key matching
-		name: "SetKeys option with id field",
-		opts: `[{"@":["users"],"^":[{"setkeys":["id"]}]}]`,
+		name: "Keys option with id field",
+		opts: `[{"@":["users"],"^":[{"keys":["id"]}]}]`,
 		a:    `{"users":[{"id":"1","name":"Alice"},{"id":"2","name":"Bob"}]}`,
 		b:    `{"users":[{"id":"2","name":"Bob"},{"id":"1","name":"Alice"}]}`, // same objects by id, different order
 	}, {
-		name: "SetKeys option with multiple keys",
-		opts: `[{"@":["items"],"^":[{"setkeys":["type","id"]}]}]`,
+		name: "Keys option with multiple keys",
+		opts: `[{"@":["items"],"^":[{"keys":["type","id"]}]}]`,
 		a:    `{"items":[{"type":"A","id":"1","data":"x"},{"type":"B","id":"2","data":"y"}]}`,
 		b:    `{"items":[{"type":"B","id":"2","data":"y"},{"type":"A","id":"1","data":"x"}]}`, // same by type+id
 	}, {
@@ -412,5 +555,97 @@ func TestDiffOnOffOption(t *testing.T) {
 				require.NotEmpty(t, diff, "Expected non-empty diff")
 			}
 		})
+	}
+}
+
+func TestRefinePathMultiset(t *testing.T) {
+	// PathOption ending in PathMultiset should infer MULTISET
+	opts := newOptions([]Option{PathOption(Path{PathKey("foo"), PathMultiset{}})})
+	refined := refine(opts, PathKey("foo"))
+	_, found := getOption[multisetOption](refined)
+	if !found {
+		t.Error("expected multisetOption to be applied for PathMultiset")
+	}
+}
+
+func TestFileOption(t *testing.T) {
+	// NewOption recognizes {"file":"example.json"}
+	opt, err := NewOption(map[string]any{"file": "example.json"})
+	require.NoError(t, err)
+	fo, ok := opt.(fileOption)
+	require.True(t, ok)
+	require.Equal(t, "example.json", fo.file)
+
+	// MarshalJSON produces {"file":"example.json"}
+	b, err := json.Marshal(opt)
+	require.NoError(t, err)
+	require.Equal(t, `{"file":"example.json"}`, string(b))
+
+	// Round-trip: File() -> marshal -> unmarshal via NewOption -> equal
+	opt2 := File("a.json")
+	b2, err := json.Marshal(opt2)
+	require.NoError(t, err)
+	var raw any
+	err = json.Unmarshal(b2, &raw)
+	require.NoError(t, err)
+	opt3, err := NewOption(raw)
+	require.NoError(t, err)
+	fo3, ok := opt3.(fileOption)
+	require.True(t, ok)
+	require.Equal(t, "a.json", fo3.file)
+
+	// Wrong type for file value
+	_, err = NewOption(map[string]any{"file": 42})
+	require.Error(t, err)
+}
+
+func TestValidateOptions(t *testing.T) {
+	cases := []struct {
+		name    string
+		opts    []Option
+		wantErr bool
+	}{{
+		name: "SET alone is valid",
+		opts: []Option{SET},
+	}, {
+		name: "precision alone is valid",
+		opts: []Option{Precision(0.01)},
+	}, {
+		name: "SET with SetKeys is valid",
+		opts: []Option{SET, SetKeys("id")},
+	}, {
+		name: "precision with SetKeys is valid",
+		opts: []Option{Precision(0.01), SetKeys("id")},
+	}, {
+		name:    "SET with precision is invalid",
+		opts:    []Option{SET, Precision(0.01)},
+		wantErr: true,
+	}, {
+		name:    "MULTISET with precision is invalid",
+		opts:    []Option{MULTISET, Precision(0.01)},
+		wantErr: true,
+	}, {
+		name:    "negative precision is invalid",
+		opts:    []Option{Precision(-0.1)},
+		wantErr: true,
+	}}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := ValidateOptions(c.opts)
+			if c.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestRefineEmptyAt(t *testing.T) {
+	// PathOption with empty At and non-nil path element should be skipped
+	opts := newOptions([]Option{PathOption(Path{}, SET)})
+	refined := refine(opts, PathKey("foo"))
+	if checkOption[setOption](refined) {
+		t.Error("expected setOption to NOT be applied for empty At with non-nil path")
 	}
 }

@@ -1,8 +1,10 @@
 package jd
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDiffRender(t *testing.T) {
@@ -247,7 +249,7 @@ func checkDiffRender(t *testing.T, a, b string, diffLines ...string) {
 		t.Errorf("%v.diff(%v) = %v. Want %v.", a, b, d, diff)
 	}
 
-	// Test with color
+	// Test with color (line-level only, no character-level LCS)
 	coloredDiff := aJson.diff(bJson, nil, newOptions([]Option{}), strictPatchStrategy).Render(COLOR)
 	strippedDiff := stripAnsiCodes(coloredDiff)
 	expectedDiffWithColorHeader := `^ "COLOR"` + "\n" + diff
@@ -255,8 +257,10 @@ func checkDiffRender(t *testing.T, a, b string, diffLines ...string) {
 		t.Errorf("%v.diff(%v) with color (stripped) = %v. Want %v.", a, b, strippedDiff, expectedDiffWithColorHeader)
 	}
 
-	// Verify that uncolored parts in string diffs match between + and - lines
-	lines := strings.Split(coloredDiff, "\n")
+	// Test with color-words (character-level diff).
+	// Verify that uncolored parts in string diffs match between + and - lines.
+	colorWordsDiff := aJson.diff(bJson, nil, newOptions([]Option{}), strictPatchStrategy).Render(COLOR_WORDS)
+	lines := strings.Split(colorWordsDiff, "\n")
 	var minusLine, plusLine string
 	for i, line := range lines {
 		if len(line) == 0 {
@@ -300,6 +304,72 @@ func removeColoredParts(s string) string {
 		}
 	}
 	return result.String()
+}
+
+func TestDiffRenderColorNoCharDiff(t *testing.T) {
+	// COLOR alone should produce line-level red/green coloring without
+	// character-level ANSI codes inside the string values.
+	a, _ := ReadJsonString(`{"a":"foobar"}`)
+	b, _ := ReadJsonString(`{"a":"foobaz"}`)
+	d := a.Diff(b)
+	rendered := d.Render(COLOR)
+
+	lines := strings.Split(rendered, "\n")
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		if line[0] == '-' && strings.Contains(line, `"foo`) {
+			// The minus line should be wrapped in red at the line level,
+			// not contain inline color codes within the quoted string.
+			// With line-level coloring: \033[31m- "foobar"\n\033[0m
+			// Character-level would have color codes between individual chars.
+			stripped := stripAnsiCodes(line)
+			if stripped != `- "foobar"` {
+				t.Errorf("COLOR minus line stripped = %q, want %q", stripped, `- "foobar"`)
+			}
+			// Should NOT have color codes inside the quotes (character-level)
+			quoteStart := strings.Index(line, `"`)
+			quoteEnd := strings.LastIndex(line, `"`)
+			if quoteStart >= 0 && quoteEnd > quoteStart {
+				inside := line[quoteStart : quoteEnd+1]
+				if strings.Contains(inside, "\033[31m") || strings.Contains(inside, "\033[32m") {
+					t.Errorf("COLOR should not have character-level coloring inside strings, got: %q", inside)
+				}
+			}
+		}
+	}
+}
+
+func TestDiffRenderColorWordsCharDiff(t *testing.T) {
+	// COLOR_WORDS should produce character-level ANSI highlighting inside
+	// the string values.
+	a, _ := ReadJsonString(`{"a":"foobar"}`)
+	b, _ := ReadJsonString(`{"a":"foobaz"}`)
+	d := a.Diff(b)
+	rendered := d.Render(COLOR_WORDS)
+
+	lines := strings.Split(rendered, "\n")
+	foundCharLevel := false
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		if line[0] == '-' && strings.Contains(line, "foo") {
+			// Should have color codes inside the string (character-level diff)
+			quoteStart := strings.Index(line, `"`)
+			quoteEnd := strings.LastIndex(line, `"`)
+			if quoteStart >= 0 && quoteEnd > quoteStart {
+				inside := line[quoteStart : quoteEnd+1]
+				if strings.Contains(inside, "\033[31m") {
+					foundCharLevel = true
+				}
+			}
+		}
+	}
+	if !foundCharLevel {
+		t.Errorf("COLOR_WORDS should produce character-level coloring inside strings, got:\n%s", rendered)
+	}
 }
 
 func TestDiffRenderPatch(t *testing.T) {
@@ -551,9 +621,9 @@ func TestDiffElementOptionsRendering(t *testing.T) {
 			want:    `^ {"precision":0.01}` + "\n",
 		},
 		{
-			name:    "setkeys option",
+			name:    "keys option",
 			options: []Option{SetKeys("id", "name")},
-			want:    `^ {"setkeys":["id","name"]}` + "\n",
+			want:    `^ {"keys":["id","name"]}` + "\n",
 		},
 		{
 			name:    "multiple simple options",
@@ -801,5 +871,284 @@ func TestLegacyMetadataRoundTrip(t *testing.T) {
 
 	if rendered != expectedModern {
 		t.Errorf("Legacy format should normalize to modern.\nGot:\n%s\nExpected:\n%s", rendered, expectedModern)
+	}
+}
+
+func TestDiffRenderPatchError(t *testing.T) {
+	tests := []struct {
+		name string
+		a    string
+		b    string
+		opts []Option
+	}{
+		{
+			name: "set-based diff returns error",
+			a:    `[1,2,3]`,
+			b:    `[1,3,4]`,
+			opts: []Option{SET},
+		},
+		{
+			name: "multiset-based diff returns error",
+			a:    `[1,2,3]`,
+			b:    `[1,3,4]`,
+			opts: []Option{MULTISET},
+		},
+		{
+			name: "setkeys-based diff returns error",
+			a:    `[{"id":"a","v":1}]`,
+			b:    `[{"id":"a","v":2}]`,
+			opts: []Option{SET, SetKeys("id")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			aJson, err := ReadJsonString(tt.a)
+			if err != nil {
+				t.Fatalf("Error reading a: %v", err)
+			}
+			bJson, err := ReadJsonString(tt.b)
+			if err != nil {
+				t.Fatalf("Error reading b: %v", err)
+			}
+			d := aJson.Diff(bJson, tt.opts...)
+			_, err = d.RenderPatch()
+			if err == nil {
+				t.Errorf("Expected error from RenderPatch with %s, got nil", tt.name)
+			}
+		})
+	}
+}
+
+func TestRenderMergeVoidAdd(t *testing.T) {
+	// Render a merge deletion (void add) with and without color
+	de := DiffElement{
+		Metadata: Metadata{Merge: true},
+		Path:     Path{PathKey("foo")},
+		Add:      []JsonNode{voidNode{}},
+	}
+	// Without color
+	rendered := de.Render()
+	if !strings.Contains(rendered, "+\n") {
+		t.Errorf("expected void add line, got: %q", rendered)
+	}
+	// With color
+	rendered = de.Render(COLOR)
+	stripped := stripAnsiCodes(rendered)
+	if !strings.Contains(stripped, "+\n") {
+		t.Errorf("expected void add in color mode, got: %q", stripped)
+	}
+}
+
+func TestDiffRenderWithFileOption(t *testing.T) {
+	a, err := ReadJsonString(`{"a":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ReadJsonString(`{"a":2}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := a.Diff(b)
+	rendered := d.Render(File("a.json"))
+	want := "^ {\"file\":\"a.json\"}\n@ [\"a\"]\n- 1\n+ 2\n"
+	if rendered != want {
+		t.Errorf("got %q, want %q", rendered, want)
+	}
+}
+
+func TestDiffRenderEmpty(t *testing.T) {
+	// Empty diff with options should produce no output
+	d := Diff{}
+	got := d.Render(SET)
+	if got != "" {
+		t.Errorf("expected empty string for empty diff. got %q", got)
+	}
+}
+
+func TestRenderMergeError(t *testing.T) {
+	// Non-merge diff element should error
+	d := Diff{DiffElement{
+		Path: Path{PathKey("a")},
+		Add:  []JsonNode{jsonString("b")},
+	}}
+	_, err := d.RenderMerge()
+	if err == nil {
+		t.Fatal("expected error for non-merge diff")
+	}
+}
+
+func TestRenderPatchErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		diff Diff
+	}{
+		{
+			name: "empty diff element",
+			diff: Diff{DiffElement{Path: Path{PathKey("a")}}},
+		},
+		{
+			name: "too many before context lines",
+			diff: Diff{DiffElement{
+				Path:   Path{PathIndex(1)},
+				Before: []JsonNode{jsonNumber(1), jsonNumber(2)},
+				Remove: []JsonNode{jsonNumber(3)},
+			}},
+		},
+		{
+			name: "too many after context lines",
+			diff: Diff{DiffElement{
+				Path:  Path{PathIndex(1)},
+				After: []JsonNode{jsonNumber(1), jsonNumber(2)},
+				Add:   []JsonNode{jsonNumber(3)},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.diff.RenderPatch()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
+func TestRenderColorLargeStringNoOOM(t *testing.T) {
+	// COLOR alone must not run O(n^2) LCS on large strings.
+	old := strings.Repeat("a", 10000)
+	new := strings.Repeat("b", 10000)
+	a, _ := ReadJsonString(fmt.Sprintf(`"%s"`, old))
+	b, _ := ReadJsonString(fmt.Sprintf(`"%s"`, new))
+	d := a.Diff(b)
+	start := time.Now()
+	d.Render(COLOR)
+	if time.Since(start) > time.Second {
+		t.Fatal("Render(COLOR) on large string took too long — LCS may be running")
+	}
+}
+
+func TestRenderPatchContextErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		diff Diff
+	}{
+		{
+			name: "before context with empty path",
+			diff: Diff{DiffElement{
+				Path:   Path{},
+				Before: []JsonNode{jsonNumber(1)},
+				Remove: []JsonNode{jsonNumber(2)},
+			}},
+		},
+		{
+			name: "before context path not PathIndex",
+			diff: Diff{DiffElement{
+				Path:   Path{PathKey("foo")},
+				Before: []JsonNode{jsonNumber(1)},
+				Remove: []JsonNode{jsonNumber(2)},
+			}},
+		},
+		{
+			name: "after context with empty path",
+			diff: Diff{DiffElement{
+				Path:   Path{},
+				After:  []JsonNode{jsonNumber(1)},
+				Remove: []JsonNode{jsonNumber(2)},
+			}},
+		},
+		{
+			name: "after context path not PathIndex",
+			diff: Diff{DiffElement{
+				Path:   Path{PathKey("foo")},
+				After:  []JsonNode{jsonNumber(1)},
+				Remove: []JsonNode{jsonNumber(2)},
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.diff.RenderPatch()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
+func TestRenderPatchVoidSkip(t *testing.T) {
+	// void remove should be skipped
+	d := Diff{DiffElement{
+		Path:   Path{PathKey("a")},
+		Remove: []JsonNode{voidNode{}},
+		Add:    []JsonNode{jsonNumber(1)},
+	}}
+	got, err := d.RenderPatch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"op":"add","path":"/a","value":1}]`
+	wantNode, _ := ReadJsonString(want)
+	gotNode, _ := ReadJsonString(got)
+	if !wantNode.Equals(gotNode) {
+		t.Errorf("want %s, got %s", want, got)
+	}
+	// void add should also be skipped
+	d2 := Diff{DiffElement{
+		Path:   Path{PathKey("a")},
+		Remove: []JsonNode{jsonNumber(1)},
+		Add:    []JsonNode{voidNode{}},
+	}}
+	got2, err := d2.RenderPatch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want2 := `[{"op":"test","path":"/a","value":1},{"op":"remove","path":"/a","value":1}]`
+	wantNode2, _ := ReadJsonString(want2)
+	gotNode2, _ := ReadJsonString(got2)
+	if !wantNode2.Equals(gotNode2) {
+		t.Errorf("want %s, got %s", want2, got2)
+	}
+}
+
+func TestDiffElementRenderSkipMetadata(t *testing.T) {
+	// When global MERGE option is passed and DiffElement has Metadata.Merge=true
+	// but no Options, the metadata rendering should be skipped
+	de := DiffElement{
+		Metadata: Metadata{Merge: true},
+		Path:     Path{PathKey("a")},
+		Add:      []JsonNode{jsonNumber(1)},
+	}
+	rendered := de.Render(MERGE)
+	if strings.Contains(rendered, "Merge") {
+		t.Errorf("expected metadata to be skipped when global MERGE covers it, got: %q", rendered)
+	}
+}
+
+func TestDiffElementRenderColorWordsNonString(t *testing.T) {
+	// COLOR_WORDS with non-string values should fall back to line-level coloring
+	de := DiffElement{
+		Path:   Path{PathKey("a")},
+		Remove: []JsonNode{jsonNumber(1)},
+		Add:    []JsonNode{jsonNumber(2)},
+	}
+	rendered := de.Render(COLOR_WORDS)
+	stripped := stripAnsiCodes(rendered)
+	if !strings.Contains(stripped, "- 1") || !strings.Contains(stripped, "+ 2") {
+		t.Errorf("expected line-level diff for non-string COLOR_WORDS, got: %q", stripped)
+	}
+}
+
+func TestRenderMergeWithPatchError(t *testing.T) {
+	// A merge diff with a Remove value will fail because merge patch can't have old values
+	d := Diff{DiffElement{
+		Metadata: Metadata{Merge: true},
+		Path:     Path{PathKey("a")},
+		Remove:   []JsonNode{jsonNumber(1)},
+		Add:      []JsonNode{jsonNumber(2)},
+	}}
+	_, err := d.RenderMerge()
+	if err == nil {
+		t.Fatal("expected error from RenderMerge with remove value in merge diff")
 	}
 }

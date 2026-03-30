@@ -1,10 +1,97 @@
 package jd
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestNewJsonNodeTypes(t *testing.T) {
+	// map[interface{}]interface{} with string keys (YAML-style)
+	yamlMap := map[interface{}]interface{}{"key": "value"}
+	n, err := NewJsonNode(yamlMap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Json() != `{"key":"value"}` {
+		t.Errorf("got %v", n.Json())
+	}
+
+	// map[interface{}]interface{} with non-string key
+	badMap := map[interface{}]interface{}{42: "value"}
+	_, err = NewJsonNode(badMap)
+	if err == nil {
+		t.Fatal("expected error for non-string key")
+	}
+
+	// Direct jsonObject passthrough
+	obj := jsonObject(map[string]JsonNode{"a": jsonString("b")})
+	n, err = NewJsonNode(obj)
+	if err != nil || n.Json() != `{"a":"b"}` {
+		t.Errorf("jsonObject passthrough failed")
+	}
+
+	// Direct jsonArray passthrough
+	arr := jsonArray{jsonNumber(1)}
+	n, err = NewJsonNode(arr)
+	if err != nil || n.Json() != `[1]` {
+		t.Errorf("jsonArray passthrough failed")
+	}
+
+	// int type
+	n, err = NewJsonNode(42)
+	if err != nil || n.Json() != `42` {
+		t.Errorf("int conversion failed")
+	}
+
+	// Direct jsonNumber passthrough
+	n, err = NewJsonNode(jsonNumber(3.14))
+	if err != nil || n.Json() != `3.14` {
+		t.Errorf("jsonNumber passthrough failed")
+	}
+
+	// Direct jsonString passthrough
+	n, err = NewJsonNode(jsonString("hello"))
+	if err != nil || n.Json() != `"hello"` {
+		t.Errorf("jsonString passthrough failed")
+	}
+
+	// Direct jsonBool passthrough
+	n, err = NewJsonNode(jsonBool(true))
+	if err != nil || n.Json() != `true` {
+		t.Errorf("jsonBool passthrough failed")
+	}
+
+	// Direct jsonNull passthrough
+	n, err = NewJsonNode(jsonNull(nil))
+	if err != nil || n.Json() != `null` {
+		t.Errorf("jsonNull passthrough failed")
+	}
+
+	// Unsupported type
+	_, err = NewJsonNode(complex(1, 2))
+	if err == nil {
+		t.Fatal("expected error for unsupported type")
+	}
+
+	// map[interface{}]interface{} with JsonNode value
+	yamlMapNode := map[interface{}]interface{}{"k": jsonString("v")}
+	n, err = NewJsonNode(yamlMapNode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Json() != `{"k":"v"}` {
+		t.Errorf("got %v", n.Json())
+	}
+}
+
+func TestNodeListEmpty(t *testing.T) {
+	l := nodeList()
+	if len(l) != 0 {
+		t.Errorf("expected empty list, got %v", l)
+	}
+}
 
 func TestNewJsonNode(t *testing.T) {
 	tests := []struct {
@@ -158,6 +245,26 @@ func TestNewJsonNode(t *testing.T) {
 			input: "héllo wørld",
 			want:  jsonString("héllo wørld"),
 		},
+		{
+			name:  "json.Number integer",
+			input: json.Number("42"),
+			want:  jsonNumber(42),
+		},
+		{
+			name:  "json.Number float",
+			input: json.Number("3.14"),
+			want:  jsonNumber(3.14),
+		},
+		{
+			name:  "json.Number negative",
+			input: json.Number("-1"),
+			want:  jsonNumber(-1),
+		},
+		{
+			name:    "json.Number invalid",
+			input:   json.Number("not-a-number"),
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -171,5 +278,23 @@ func TestNewJsonNode(t *testing.T) {
 				require.True(t, tt.want.Equals(got))
 			}
 		})
+	}
+}
+
+func TestNewJsonNodeNestedErrors(t *testing.T) {
+	// map[string]interface{} with unsupported nested value
+	_, err := NewJsonNode(map[string]interface{}{"k": complex(1, 2)})
+	if err == nil {
+		t.Fatal("expected error for unsupported nested type in map[string]interface{}")
+	}
+	// map[interface{}]interface{} with unsupported nested value
+	_, err = NewJsonNode(map[interface{}]interface{}{"k": complex(1, 2)})
+	if err == nil {
+		t.Fatal("expected error for unsupported nested type in map[interface{}]interface{}")
+	}
+	// []interface{} with unsupported element
+	_, err = NewJsonNode([]interface{}{complex(1, 2)})
+	if err == nil {
+		t.Fatal("expected error for unsupported element type in []interface{}")
 	}
 }

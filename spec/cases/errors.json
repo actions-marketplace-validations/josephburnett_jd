@@ -1,0 +1,81 @@
+[
+  {
+    "name": "invalid_json_input",
+    "description": "Malformed JSON input should cause error",
+    "category": "errors",
+    "content_a": "{\"invalid\": json}",
+    "content_b": "{}",
+    "expect_error": true
+  },
+  {
+    "name": "invalid_json_second_input",
+    "description": "Malformed JSON in second input",
+    "category": "errors",
+    "content_a": "{}",
+    "content_b": "{\"invalid\": syntax",
+    "expect_error": true
+  },
+  {
+    "name": "precision_with_set_conflict",
+    "description": "Precision option conflicts with set option",
+    "category": "errors",
+    "content_a": "[1,2,3]",
+    "content_b": "[1,2,4]",
+    "options": ["SET", {"precision": 0.1}],
+    "expect_error": true
+  },
+  {
+    "name": "precision_with_multiset_conflict",
+    "description": "Precision option conflicts with multiset option",
+    "category": "errors",
+    "content_a": "[1,2,3]",
+    "content_b": "[1,2,4]",
+    "options": ["MULTISET", {"precision": 0.1}],
+    "expect_error": true
+  },
+  {
+    "name": "invalid_keys_empty",
+    "description": "Empty keys should cause error",
+    "category": "errors",
+    "content_a": "[{\"id\":1}]",
+    "content_b": "[{\"id\":2}]",
+    "options": [{"keys": []}],
+    "expect_error": true
+  },
+  {
+    "name": "negative_precision",
+    "description": "Negative precision value should cause error",
+    "category": "errors",
+    "content_a": "1.0",
+    "content_b": "1.1",
+    "options": [{"precision": -0.1}],
+    "expect_error": true
+  },
+  {
+    "name": "malformed_diff_syntax",
+    "description": "Malformed diff format in patch mode",
+    "category": "errors",
+    "operation": "patch",
+    "content_a": "@ [invalid path syntax\n+ value\n",
+    "content_b": "{}",
+    "expect_error": true
+  },
+  {
+    "name": "invalid_path_element",
+    "description": "Invalid path element in diff",
+    "category": "errors",
+    "operation": "patch",
+    "content_a": "@ [123invalid]\n+ value\n",
+    "content_b": "{}",
+    "expect_error": true
+  },
+  {
+    "name": "patch_context_mismatch",
+    "description": "Context mismatch during patch application",
+    "category": "errors",
+    "operation": "patch",
+    "content_a": "@ [0]\n[\n  \"expected\"\n- \"remove\"\n+ \"add\"\n]\n",
+    "content_b": "[\"actual\",\"remove\"]",
+    "expect_error": true
+  }
+]

@@ -19,7 +19,7 @@ MetadataLine = "^" SP JsonValue CRLF
 DiffElement = PathLine [ArrayOpen] *ContextLine *ChangeLine [*ContextLine] [ArrayClose]
 
 ; Path specification
-PathLine = "@" SP JsonArray CRLF
+PathLine = "@" SP PathArray CRLF
 
 ; Array context markers
 ArrayOpen = "[" CRLF
@@ -32,21 +32,21 @@ AddLine = "+" SP [JsonValue] CRLF
 RemoveLine = "-" SP JsonValue CRLF
 
 ; JSON array for paths (restricted form)
-JsonArray = "[" [PathElement *(", " PathElement)] "]"
+PathArray = "[" [PathElement *(", " PathElement)] "]"
 
 ; Path elements
 PathElement = JsonString         ; Object key
             / JsonNumber         ; Array index  
             / EmptyObject        ; Set marker
             / EmptyArray         ; List marker
-            / SetKeysObject      ; Set with matching keys
+            / KeysObject      ; Set with matching keys
             / MultisetContainer  ; Multiset marker
 
 ; Special path element types
 EmptyObject = "{}"
 EmptyArray = "[]"
-SetKeysObject = "{" KeyValuePair *(", " KeyValuePair) "}"
-MultisetContainer = "[" [EmptyObject / SetKeysObject] "]"
+KeysObject = "{" KeyValuePair *(", " KeyValuePair) "}"
+MultisetContainer = "[" [EmptyObject / KeysObject] "]"
 
 ; Key-value pairs for set keys
 KeyValuePair = JsonString ":" JsonValue
@@ -59,7 +59,7 @@ JsonObject = "{" [JsonString ":" JsonValue *(", " JsonString ":" JsonValue)] "}"
 JsonArray = "[" [JsonValue *(", " JsonValue)] "]"
 JsonBool = "true" / "false"
 JsonNull = "null"
-JsonVoid = ""  ; Empty value for merge operations
+JsonVoid = ""  ; Empty value (absence of a value)
 
 ; Character definitions
 JsonChar = %x20-21 / %x23-5B / %x5D-10FFFF / EscapeSequence
@@ -85,14 +85,13 @@ Metadata lines provide options and configuration for the diff:
 MetadataOption = SimpleOption / ObjectOption / PathOption
 
 ; Simple string options
-SimpleOption = %s"SET" / %s"MULTISET" / %s"MERGE" / %s"COLOR" / %s"DIFF_ON" / %s"DIFF_OFF"
+SimpleOption = %s"SET" / %s"MULTISET" / %s"DIFF_ON" / %s"DIFF_OFF"
 
 ; Complex object options  
-ObjectOption = PrecisionOption / SetKeysOption / LegacyMergeOption
+ObjectOption = PrecisionOption / KeysOption
 
 PrecisionOption = "{" %s"\"precision\"" ":" JsonNumber "}"
-SetKeysOption = "{" %s"\"setkeys\"" ":" JsonArray "}"
-LegacyMergeOption = "{" %s"\"Merge\"" ":" JsonBool "}"
+KeysOption = "{" (%s"\"keys\"" / %s"\"setkeys\"") ":" JsonArray "}"
 
 ; Path-specific options
 PathOption = "{" %s"\"@\"" ":" JsonArray ", " %s"\"^\"" ":" "[" MetadataOption *(", " MetadataOption) "]" "}"
@@ -116,14 +115,14 @@ ArrayIndex = JsonNumber
 ### Set Operations
 ```abnf
 SetMarker = EmptyObject    ; {} - operate on any set element
-SetWithKeys = SetKeysObject ; {"id":"value"} - match by specific keys
+SetWithKeys = KeysObject ; {"id":"value"} - match by specific keys
 ```
 
 ### Multiset Operations  
 ```abnf
 MultisetMarker = "[" "]"                    ; [] - list marker
 MultisetWithObject = "[" EmptyObject "]"    ; [{}] - multiset of any
-MultisetWithKeys = "[" SetKeysObject "]"    ; [{"key":"val"}] - multiset with keys
+MultisetWithKeys = "[" KeysObject "]"    ; [{"key":"val"}] - multiset with keys
 ```
 
 ## Line Type Specifications
@@ -171,11 +170,8 @@ ArrayClose = "]" CRLF    ; Only when showing array end as context
 
 ## Grammar Extensions
 
-### Color Support
-When `COLOR` option is present, implementations MAY add ANSI color codes to change lines while preserving the grammar structure.
-
-### Legacy Compatibility  
-- `{"Merge":true}` metadata is equivalent to `"MERGE"` option
+### Legacy Compatibility
+- `{"setkeys":[...]}` is a legacy alias for `{"keys":[...]}`
 - Implementations SHOULD normalize to modern format when rendering
 
 ## Validation Rules
@@ -183,7 +179,7 @@ When `COLOR` option is present, implementations MAY add ANSI color codes to chan
 1. **Path Validity**: Path elements must form valid JSON property/index chains
 2. **Value Consistency**: JSON values must be syntactically valid
 3. **Context Preservation**: Array contexts must maintain proper opening/closing
-4. **Option Conflicts**: Implementations SHOULD detect conflicting options (e.g., precision with set operations)
+4. **Option Conflicts**: Implementations MUST reject combinations of equivalence modifiers (e.g., precision) with set semantics (SET, MULTISET) because set operations require hash-stable equivalence
 
 ## Implementation Notes
 

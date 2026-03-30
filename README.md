@@ -60,6 +60,7 @@ GitHub Action:
 
 To get the `jd` commandline utility:
 * run `brew install jd`, or
+* run `mise use -g jd@latest` if you are using [mise](https://jdx.mise.dev), or
 * run `go install github.com/josephburnett/jd/v2/jd@latest`, or
 * visit https://github.com/josephburnett/jd/releases/latest and download the pre-built binary for your architecture/os, or
 * run in a Docker image `jd(){ docker run --rm -i -v $PWD:$PWD -w $PWD josephburnett/jd "$@"; }`.
@@ -563,4 +564,11 @@ kubectl get deployment example -oyaml | jd -yaml -opts='[
 ]' a.yaml > cpu-patch
 kubectl patch deployment example2 --type json --patch "$(jd -t jd2patch cpu-patch)"
 ```
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+This project uses minimal dependencies, pinned GitHub Actions, and automated
+dependency updates via Dependabot.
 

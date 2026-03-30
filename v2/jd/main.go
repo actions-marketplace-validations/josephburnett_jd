@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -22,6 +22,7 @@ const version = "HEAD"
 
 var (
 	color         = flag.Bool("color", false, "Print color diff")
+	colorWords    = flag.Bool("color-words", false, "Print color diff with character-level highlighting")
 	format        = flag.String("f", "", "Diff format (jd, patch, merge)")
 	gitDiffDriver = flag.Bool("git-diff-driver", false, "Use jd as a git diff driver.")
 	mset          = flag.Bool("mset", false, "Arrays as multisets")
@@ -138,9 +139,6 @@ func serveWeb(port string) error {
 }
 
 func parseOptions() ([]jd.Option, error) {
-	if *precision != 0.0 && (*set || *mset) {
-		return nil, fmt.Errorf("-precision cannot be used with -set or -mset because they use hashcodes")
-	}
 	options, err := jd.ReadOptionsString(*opts)
 	if err != nil {
 		return nil, err
@@ -169,6 +167,9 @@ func parseOptions() ([]jd.Option, error) {
 	if *precision != 0.0 {
 		options = append(options, jd.Precision(*precision))
 	}
+	if err := jd.ValidateOptions(options); err != nil {
+		return nil, err
+	}
 	return options, nil
 }
 
@@ -186,20 +187,21 @@ func printUsageAndExit() {
 		`beginning of the diff output to show how the diff was produced:`,
 		`  ^ "SET"                     (arrays treated as sets)`,
 		`  ^ {"precision":0.001}       (number comparison precision)`,
-		`  ^ {"setkeys":["id"]}        (object matching keys)`,
+		`  ^ {"keys":["id"]}           (object matching keys)`,
 		`This helps understand diff behavior and enables reproducible results.`,
 		``,
 		`Options:`,
 		`  -color       Print color diff.`,
+		`  -color-words Print color diff with character-level highlighting.`,
 		`  -p           Apply patch FILE1 to FILE2 or STDIN.`,
 		`  -o=FILE3     Write to FILE3 instead of STDOUT.`,
 		`  -opts='[]'   JSON array of options. Supports global options and PathOptions.`,
-		`               Global: ["SET"], ["MULTISET"], [{"precision":0.1}], [{"setkeys":["id"]}], ["DIFF_ON"], ["DIFF_OFF"]`,
+		`               Global: ["SET"], ["MULTISET"], [{"precision":0.1}], [{"keys":["id"]}], ["DIFF_ON"], ["DIFF_OFF"]`,
 		`               PathOptions target specific paths: [{"@":["path"],"^":["SET"]}]`,
 		`               Example: [{"@":["users"],"^":["SET"]},{"@":["scores",0],"^":[{"precision":0.1}]}]`,
 		`  -set         Treat arrays as sets. Same as -opts='["SET"]'.`,
 		`  -mset        Treat arrays as multisets (bags). Same as -opts='["MULTISET"]'.`,
-		`  -setkeys     Keys to identify set objects. Same as -opts='[{"setkeys":["key1","key2"]}]'.`,
+		`  -setkeys     Keys to identify set objects. Same as -opts='[{"keys":["key1","key2"]}]'.`,
 		`  -yaml        Read and write YAML instead of JSON.`,
 		`  -port=N      Serve web UI on port N`,
 		`  -precision=N Maximum absolute difference for numbers to be equal.`,
@@ -232,6 +234,7 @@ func printUsageAndExit() {
 }
 
 func printDiff(a, b string, options []jd.Option) {
+	options = append([]jd.Option{jd.File(flag.Arg(0))}, options...)
 	str, haveDiff, err := diff(a, b, options)
 	if err != nil {
 		errorAndExit(err)
@@ -239,7 +242,7 @@ func printDiff(a, b string, options []jd.Option) {
 	if *output == "" {
 		fmt.Print(str)
 	} else {
-		ioutil.WriteFile(*output, []byte(str), 0644)
+		os.WriteFile(*output, []byte(str), 0644)
 	}
 	if haveDiff {
 		os.Exit(1)
@@ -251,6 +254,7 @@ func printGitDiffDriver(options []jd.Option) error {
 	if len(flag.Args()) != 7 {
 		return fmt.Errorf("Git diff driver expects exactly 7 arguments.")
 	}
+	options = append([]jd.Option{jd.File(flag.Arg(0))}, options...)
 	a := readFile(flag.Arg(1))
 	b := readFile(flag.Arg(4))
 	str, _, err := diff(a, b, options)
@@ -285,7 +289,9 @@ func diff(a, b string, options []jd.Option) (string, bool, error) {
 	var renderOptions []jd.Option
 	// Include all the original options to show in the header
 	renderOptions = append(renderOptions, options...)
-	if *color {
+	if *colorWords {
+		renderOptions = append(renderOptions, jd.COLOR_WORDS)
+	} else if *color {
 		renderOptions = append(renderOptions, jd.COLOR)
 	}
 	var (
@@ -414,7 +420,7 @@ func printTranslation(a string) {
 	if *output == "" {
 		fmt.Print(out)
 	} else {
-		ioutil.WriteFile(*output, []byte(out), 0644)
+		os.WriteFile(*output, []byte(out), 0644)
 	}
 	os.Exit(0)
 }
@@ -429,7 +435,7 @@ func errorfAndExit(msg string, args ...interface{}) {
 }
 
 func readFile(filename string) string {
-	bytes, err := ioutil.ReadFile(filename)
+	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		log.Print(err.Error())
 		os.Exit(2)
@@ -439,7 +445,7 @@ func readFile(filename string) string {
 
 func readStdin() string {
 	r := bufio.NewReader(os.Stdin)
-	bytes, err := ioutil.ReadAll(r)
+	bytes, err := io.ReadAll(r)
 	if err != nil {
 		log.Print(err.Error())
 		os.Exit(2)
